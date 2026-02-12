@@ -29,7 +29,22 @@ const priorityColors = {
 
 export function TaskCard({ task, index, onEdit, onDelete, onView }: TaskCardProps) {
   const { data: users } = useUsers();
-  const assignedUser = users?.find(u => u.id === task.assignedToId);
+  const rawAssignedToIds = (task as any).assignedToIds;
+  let assignedToIds: number[] = [];
+  if (Array.isArray(rawAssignedToIds)) {
+    assignedToIds = rawAssignedToIds.map((id: any) => Number(id)).filter((id: number) => Number.isFinite(id));
+  } else if (typeof rawAssignedToIds === "string") {
+    try {
+      const parsed = JSON.parse(rawAssignedToIds);
+      if (Array.isArray(parsed)) {
+        assignedToIds = parsed.map((id: any) => Number(id)).filter((id: number) => Number.isFinite(id));
+      }
+    } catch {
+      assignedToIds = [];
+    }
+  }
+  if (assignedToIds.length === 0 && task.assignedToId) assignedToIds = [task.assignedToId];
+  const assignedUsers = users?.filter((u) => assignedToIds.includes(u.id)) || [];
   const { user } = useAuth();
 
   return (
@@ -124,14 +139,21 @@ export function TaskCard({ task, index, onEdit, onDelete, onView }: TaskCardProp
               })()}
 
               <div className="flex items-center text-xs text-muted-foreground pt-3 border-t border-border/50 mt-auto">
-                {assignedUser ? (
+                {assignedUsers.length > 0 ? (
                   <div className="flex items-center gap-1.5">
-                    <Avatar className="h-5 w-5 border border-primary/10">
-                      <AvatarFallback className="text-[10px] bg-primary/5 text-primary">
-                        {assignedUser.name.split(' ').map(n => n[0]).join('').toUpperCase()}
-                      </AvatarFallback>
-                    </Avatar>
-                    <span className="truncate max-w-[80px]">{assignedUser.name}</span>
+                    <div className="flex -space-x-1">
+                      {assignedUsers.slice(0, 2).map((assignedUser) => (
+                        <Avatar key={assignedUser.id} className="h-5 w-5 border border-primary/10">
+                          <AvatarFallback className="text-[10px] bg-primary/5 text-primary">
+                            {assignedUser.name.split(' ').map(n => n[0]).join('').toUpperCase()}
+                          </AvatarFallback>
+                        </Avatar>
+                      ))}
+                    </div>
+                    <span className="truncate max-w-[110px]">
+                      {assignedUsers[0].name}
+                      {assignedUsers.length > 1 ? ` +${assignedUsers.length - 1}` : ""}
+                    </span>
                   </div>
                 ) : (
                   <div className="flex items-center gap-1">

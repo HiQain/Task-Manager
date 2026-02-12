@@ -1,14 +1,17 @@
 import { db } from "./db";
 import {
+  messages,
   tasks,
   users,
+  type Message,
+  type InsertMessage,
   type Task,
   type User,
   type InsertTask,
   type InsertUser,
   type UpdateTaskRequest
 } from "@shared/schema";
-import { eq } from "drizzle-orm";
+import { and, asc, eq, isNull, ne, or } from "drizzle-orm";
 import crypto from "crypto";
 
 export interface IStorage {
@@ -26,10 +29,50 @@ export interface IStorage {
   createTask(task: InsertTask): Promise<Task>;
   updateTask(id: number, updates: UpdateTaskRequest): Promise<Task>;
   deleteTask(id: number): Promise<void>;
+
+  // Chats
+  getChatUsers(currentUserId: number): Promise<User[]>;
+  getMessagesBetweenUsers(userId: number, otherUserId: number): Promise<Message[]>;
+  createMessage(data: InsertMessage & { fromUserId: number }): Promise<Message>;
+  markMessagesAsRead(userId: number, otherUserId: number): Promise<void>;
+  getUnreadCountsForUser(userId: number): Promise<{ total: number; byUser: Record<string, number> }>;
 }
 
 function hashPassword(password: string): string {
   return crypto.createHash('sha256').update(password).digest('hex');
+}
+
+function normalizeAssignedToIds(rawIds: unknown, fallbackId?: unknown): number[] {
+  const coerceArray = (arr: unknown[]): number[] =>
+    arr.map((v) => Number(v)).filter((v) => Number.isFinite(v));
+
+  if (Array.isArray(rawIds)) return coerceArray(rawIds);
+
+  if (typeof rawIds === "string") {
+    const trimmed = rawIds.trim();
+    if (!trimmed) return typeof fallbackId === "number" ? [fallbackId] : [];
+
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) return coerceArray(parsed);
+      if (typeof parsed === "number" && Number.isFinite(parsed)) return [parsed];
+      if (typeof parsed === "string") {
+        return parsed
+          .split(",")
+          .map((v) => Number(v.trim()))
+          .filter((v) => Number.isFinite(v));
+      }
+    } catch {
+      return trimmed
+        .split(",")
+        .map((v) => Number(v.trim()))
+        .filter((v) => Number.isFinite(v));
+    }
+  }
+
+  if (typeof rawIds === "number" && Number.isFinite(rawIds)) return [rawIds];
+  if (typeof fallbackId === "number" && Number.isFinite(fallbackId)) return [fallbackId];
+  return [];
 }
 
 export class DatabaseStorage implements IStorage {
@@ -71,6 +114,7 @@ export class DatabaseStorage implements IStorage {
     return rows.map((r: any) => {
       let attachments = [];
       try { attachments = JSON.parse(r.attachments || '[]'); } catch { attachments = []; }
+      const assignedToIds = normalizeAssignedToIds(r.assignedToIds, r.assignedToId);
       let dueDate: string | null = null;
       if (r.dueDate instanceof Date) {
         dueDate = r.dueDate.toISOString();
@@ -79,7 +123,7 @@ export class DatabaseStorage implements IStorage {
       } else {
         dueDate = null;
       }
-      return { ...r, attachments, dueDate } as any;
+      return { ...r, attachments, assignedToIds, dueDate } as any;
     });
   }
 
@@ -88,14 +132,21 @@ export class DatabaseStorage implements IStorage {
     if (!task) return undefined;
     try {
       // attachments stored as JSON string in DB; parse for API consumers
-      return { ...task, attachments: JSON.parse(task.attachments || "[]") } as any;
+      const assignedToIds = normalizeAssignedToIds((task as any).assignedToIds, (task as any).assignedToId);
+      return { ...task, attachments: JSON.parse(task.attachments || "[]"), assignedToIds } as any;
     } catch (e) {
-      return { ...task, attachments: [] } as any;
+      const assignedToIds = normalizeAssignedToIds((task as any).assignedToIds, (task as any).assignedToId);
+      return { ...task, attachments: [], assignedToIds } as any;
     }
   }
 
   async createTask(insertTask: InsertTask): Promise<Task> {
     const attachmentsJson = JSON.stringify((insertTask as any).attachments || []);
+    const assignedToIds = normalizeAssignedToIds(
+      (insertTask as any).assignedToIds,
+      (insertTask as any).assignedToId
+    );
+    const assignedToId = assignedToIds.length > 0 ? assignedToIds[0] : ((insertTask as any).assignedToId || null);
     const rawDue = (insertTask as any).dueDate;
     let dueDateVal: Date | null = null;
     if (rawDue) {
@@ -105,22 +156,34 @@ export class DatabaseStorage implements IStorage {
     }
     const toInsert: any = {
       ...insertTask,
+      assignedToId,
+      assignedToIds: JSON.stringify(assignedToIds),
       attachments: attachmentsJson,
       dueDate: dueDateVal,
     };
     const [task] = await db.insert(tasks).values(toInsert).returning();
     try {
       const attachments = JSON.parse(task.attachments || "[]");
+      const parsedAssignedToIds = normalizeAssignedToIds((task as any).assignedToIds, (task as any).assignedToId);
       const dueDate = task.dueDate instanceof Date ? task.dueDate.toISOString() : (typeof task.dueDate === 'string' ? task.dueDate : null);
-      return { ...task, attachments, dueDate } as any;
+      return { ...task, attachments, assignedToIds: parsedAssignedToIds, dueDate } as any;
     } catch (e) {
+      const parsedAssignedToIds = normalizeAssignedToIds((task as any).assignedToIds, (task as any).assignedToId);
       const dueDate = task.dueDate instanceof Date ? task.dueDate.toISOString() : (typeof task.dueDate === 'string' ? task.dueDate : null);
-      return { ...task, attachments: [], dueDate } as any;
+      return { ...task, attachments: [], assignedToIds: parsedAssignedToIds, dueDate } as any;
     }
   }
 
   async updateTask(id: number, updates: UpdateTaskRequest): Promise<Task> {
     const toUpdate = { ...updates } as any;
+    if ((updates as any).assignedToIds !== undefined) {
+      const assignedToIds = normalizeAssignedToIds(
+        (updates as any).assignedToIds,
+        (updates as any).assignedToId
+      );
+      toUpdate.assignedToIds = JSON.stringify(assignedToIds);
+      toUpdate.assignedToId = assignedToIds.length > 0 ? assignedToIds[0] : null;
+    }
     if ((updates as any).attachments) {
       toUpdate.attachments = JSON.stringify((updates as any).attachments);
     }
@@ -140,16 +203,76 @@ export class DatabaseStorage implements IStorage {
       .returning();
     try {
       const attachments = JSON.parse(updated.attachments || "[]");
+      const parsedAssignedToIds = normalizeAssignedToIds((updated as any).assignedToIds, (updated as any).assignedToId);
       const dueDate = updated.dueDate instanceof Date ? updated.dueDate.toISOString() : (typeof updated.dueDate === 'string' ? updated.dueDate : null);
-      return { ...updated, attachments, dueDate } as any;
+      return { ...updated, attachments, assignedToIds: parsedAssignedToIds, dueDate } as any;
     } catch (e) {
+      const parsedAssignedToIds = normalizeAssignedToIds((updated as any).assignedToIds, (updated as any).assignedToId);
       const dueDate = updated.dueDate instanceof Date ? updated.dueDate.toISOString() : (typeof updated.dueDate === 'string' ? updated.dueDate : null);
-      return { ...updated, attachments: [], dueDate } as any;
+      return { ...updated, attachments: [], assignedToIds: parsedAssignedToIds, dueDate } as any;
     }
   }
 
   async deleteTask(id: number): Promise<void> {
     await db.delete(tasks).where(eq(tasks.id, id));
+  }
+
+  // Chat Implementation
+  async getChatUsers(currentUserId: number): Promise<User[]> {
+    return await db.select().from(users).where(ne(users.id, currentUserId));
+  }
+
+  async getMessagesBetweenUsers(userId: number, otherUserId: number): Promise<Message[]> {
+    return await db
+      .select()
+      .from(messages)
+      .where(
+        or(
+          and(eq(messages.fromUserId, userId), eq(messages.toUserId, otherUserId)),
+          and(eq(messages.fromUserId, otherUserId), eq(messages.toUserId, userId))
+        )
+      )
+      .orderBy(asc(messages.createdAt));
+  }
+
+  async createMessage(data: InsertMessage & { fromUserId: number }): Promise<Message> {
+    const [message] = await db
+      .insert(messages)
+      .values({
+        fromUserId: data.fromUserId,
+        toUserId: data.toUserId,
+        content: data.content,
+      })
+      .returning();
+    return message;
+  }
+
+  async markMessagesAsRead(userId: number, otherUserId: number): Promise<void> {
+    await db
+      .update(messages)
+      .set({ readAt: new Date() })
+      .where(
+        and(
+          eq(messages.fromUserId, otherUserId),
+          eq(messages.toUserId, userId),
+          isNull(messages.readAt)
+        )
+      );
+  }
+
+  async getUnreadCountsForUser(userId: number): Promise<{ total: number; byUser: Record<string, number> }> {
+    const incomingUnread = await db
+      .select()
+      .from(messages)
+      .where(and(eq(messages.toUserId, userId), isNull(messages.readAt)));
+
+    const byUser: Record<string, number> = {};
+    for (const row of incomingUnread) {
+      const key = String(row.fromUserId);
+      byUser[key] = (byUser[key] || 0) + 1;
+    }
+
+    return { total: incomingUnread.length, byUser };
   }
 }
 

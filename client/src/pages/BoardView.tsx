@@ -77,12 +77,30 @@ export default function BoardView() {
     );
   }
 
-  const tasksByStatus = tasks?.reduce((acc, task) => {
+  const visibleTasks = user?.role === "admin"
+    ? (tasks || [])
+    : (tasks || []).filter((task) => {
+      const rawAssignedToIds = (task as any).assignedToIds;
+      let assignedToIds: number[] = [];
+      if (Array.isArray(rawAssignedToIds)) assignedToIds = rawAssignedToIds;
+      else if (typeof rawAssignedToIds === "string") {
+        try {
+          const parsed = JSON.parse(rawAssignedToIds);
+          if (Array.isArray(parsed)) assignedToIds = parsed;
+        } catch {
+          assignedToIds = [];
+        }
+      }
+      if (assignedToIds.length === 0 && task.assignedToId) assignedToIds = [task.assignedToId];
+      return !!user?.id && assignedToIds.includes(user.id);
+    });
+
+  const tasksByStatus = visibleTasks.reduce((acc, task) => {
     const status = task.status || "todo";
     if (!acc[status]) acc[status] = [];
     acc[status].push(task);
     return acc;
-  }, {} as Record<string, Task[]>) || {};
+  }, {} as Record<string, Task[]>);
 
   return (
     <div className="h-full overflow-x-auto pb-4">

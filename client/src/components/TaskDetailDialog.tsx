@@ -16,7 +16,22 @@ export function TaskDetailDialog({ open, onOpenChange, task }: Props) {
   const { data: users } = useUsers();
   if (!task) return null;
 
-  const assignedUser = users?.find((u) => u.id === task.assignedToId);
+  const rawAssignedToIds = (task as any).assignedToIds;
+  let assignedToIds: number[] = [];
+  if (Array.isArray(rawAssignedToIds)) {
+    assignedToIds = rawAssignedToIds.map((id: any) => Number(id)).filter((id: number) => Number.isFinite(id));
+  } else if (typeof rawAssignedToIds === "string") {
+    try {
+      const parsed = JSON.parse(rawAssignedToIds);
+      if (Array.isArray(parsed)) {
+        assignedToIds = parsed.map((id: any) => Number(id)).filter((id: number) => Number.isFinite(id));
+      }
+    } catch {
+      assignedToIds = [];
+    }
+  }
+  if (assignedToIds.length === 0 && task.assignedToId) assignedToIds = [task.assignedToId];
+  const assignedUsers = users?.filter((u) => assignedToIds.includes(u.id)) || [];
   const attachments = Array.isArray((task as any).attachments)
     ? (task as any).attachments
     : (() => {
@@ -67,18 +82,22 @@ export function TaskDetailDialog({ open, onOpenChange, task }: Props) {
 
           <div className="rounded-lg border p-3 bg-muted/20">
             <p className="text-xs text-muted-foreground mb-2">Assigned To</p>
-            {assignedUser ? (
-              <div className="flex items-center gap-2">
-                <Avatar className="h-7 w-7 border border-primary/10">
-                  <AvatarFallback className="text-[11px] bg-primary/5 text-primary">
-                    {assignedUser.name
-                      .split(" ")
-                      .map((n) => n[0])
-                      .join("")
-                      .toUpperCase()}
-                  </AvatarFallback>
-                </Avatar>
-                <span className="text-sm font-medium">{assignedUser.name}</span>
+            {assignedUsers.length > 0 ? (
+              <div className="space-y-2">
+                {assignedUsers.map((assignedUser) => (
+                  <div key={assignedUser.id} className="flex items-center gap-2">
+                    <Avatar className="h-7 w-7 border border-primary/10">
+                      <AvatarFallback className="text-[11px] bg-primary/5 text-primary">
+                        {assignedUser.name
+                          .split(" ")
+                          .map((n) => n[0])
+                          .join("")
+                          .toUpperCase()}
+                      </AvatarFallback>
+                    </Avatar>
+                    <span className="text-sm font-medium">{assignedUser.name}</span>
+                  </div>
+                ))}
               </div>
             ) : (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">

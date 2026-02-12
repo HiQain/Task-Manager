@@ -17,6 +17,7 @@ import BoardView from "@/pages/BoardView";
 import ListView from "@/pages/ListView";
 import Users from "@/pages/Users";
 import AdminConsole from "@/pages/AdminConsole";
+import Chat from "@/pages/Chat";
 
 function Router() {
   const { user } = useAuth();
@@ -49,6 +50,12 @@ function Router() {
         </ProtectedRoute>
       </Route>
 
+      <Route path="/chat">
+        <ProtectedRoute>
+          <Chat />
+        </ProtectedRoute>
+      </Route>
+
       <Route path="/admin">
         <ProtectedRoute requiredRole="admin">
           <AdminConsole />
@@ -71,6 +78,7 @@ function Layout({ children }: { children: React.ReactNode }) {
       case "/board": return "Hiqain Board";
       case "/list": return "All Tasks";
       case "/users": return "Team Management";
+      case "/chat": return "Team Chat";
       default: return "";
     }
   };

@@ -1,11 +1,34 @@
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Kanban, ListTodo, Plus, Users, Shield } from "lucide-react";
+import { LayoutDashboard, Kanban, ListTodo, Plus, Users, Shield, MessageSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/use-auth";
+import { useUnreadCounts } from "@/hooks/use-chat";
+import { useEffect } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { api } from "@shared/routes";
 
 export function Sidebar({ onNewTask }: { onNewTask: () => void }) {
   const [location] = useLocation();
   const { user } = useAuth();
+  const queryClient = useQueryClient();
+  const { data: unreadCounts } = useUnreadCounts();
+  const totalUnread = unreadCounts?.total || 0;
+
+  useEffect(() => {
+    if (!user?.id) return;
+
+    const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+    const ws = new WebSocket(`${protocol}://${window.location.host}/ws?userId=${user.id}`);
+
+    ws.onmessage = () => {
+      queryClient.invalidateQueries({ queryKey: [api.chats.unread.path] });
+      queryClient.invalidateQueries({ queryKey: [api.chats.list.path] });
+    };
+
+    return () => {
+      ws.close();
+    };
+  }, [user?.id, queryClient]);
 
   // All admin items
   const adminNavItems = [
@@ -13,11 +36,13 @@ export function Sidebar({ onNewTask }: { onNewTask: () => void }) {
     { label: "Hiqain Board", icon: Kanban, href: "/board" },
     { label: "List View", icon: ListTodo, href: "/list" },
     { label: "Team", icon: Users, href: "/users" },
+    { label: "Chat", icon: MessageSquare, href: "/chat" },
   ];
 
   // User only sees tasks for drag & drop
   const userNavItems = [
     { label: "Hiqain Board", icon: Kanban, href: "/board" },
+    { label: "Chat", icon: MessageSquare, href: "/chat" },
   ];
 
   const navItems = user?.role === "admin" ? adminNavItems : userNavItems;
@@ -52,7 +77,12 @@ export function Sidebar({ onNewTask }: { onNewTask: () => void }) {
                 `}
               >
                 <item.icon className="w-4 h-4" />
-                {item.label}
+                <span>{item.label}</span>
+                {item.href === "/chat" && totalUnread > 0 && (
+                  <span className="ml-auto min-w-5 h-5 px-1 rounded-full bg-destructive text-destructive-foreground text-[10px] font-semibold flex items-center justify-center">
+                    {totalUnread > 99 ? "99+" : totalUnread}
+                  </span>
+                )}
               </div>
             </Link>
           );
@@ -89,22 +119,19 @@ export function Sidebar({ onNewTask }: { onNewTask: () => void }) {
         </div>
       )}
 
-      {
-        user?.role === "admin" && (
-          <div className="mt-8 px-2">
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-4 pl-1">
-              Actions
-            </p>
-            <Button
-              onClick={onNewTask}
-              className="w-full justify-start gap-2 shadow-lg shadow-primary/20 hover:shadow-primary/30 transition-all hover:-translate-y-0.5"
-            >
-              <Plus className="w-4 h-4" />
-              New Task
-            </Button>
-          </div>
-        )
-      }
+
+      <div className="mt-8 px-2">
+        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-4 pl-1">
+          Actions
+        </p>
+        <Button
+          onClick={onNewTask}
+          className="w-full justify-start gap-2 shadow-lg shadow-primary/20 hover:shadow-primary/30 transition-all hover:-translate-y-0.5"
+        >
+          <Plus className="w-4 h-4" />
+          New Task
+        </Button>
+      </div>
 
       {/* <div className="mt-auto mb-8 px-4">
         <div className="bg-gradient-to-br from-primary/5 to-accent/5 rounded-xl p-4 border border-border/50">

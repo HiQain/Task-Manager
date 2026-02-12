@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { insertTaskSchema, type InsertTask, type Task } from "@shared/schema";
@@ -26,6 +26,7 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
   const { data: users } = useUsers();
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [assigneeSearch, setAssigneeSearch] = useState("");
 
   const form = useForm<InsertTask>({
     resolver: zodResolver(insertTaskSchema),
@@ -36,6 +37,7 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
       status: "todo",
       completed: false,
       assignedToId: undefined,
+      assignedToIds: [],
       attachments: undefined,
       dueDate: undefined,
     },
@@ -43,6 +45,7 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
 
   const attachments = form.watch("attachments") || [];
   const dueDate = form.watch("dueDate");
+  const assignedToIds = form.watch("assignedToIds") || [];
 
   const parseAttachments = (raw: unknown): any[] => {
     if (Array.isArray(raw)) return raw;
@@ -56,6 +59,66 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
     }
     return [];
   };
+
+  const parseAssignedToIds = (rawIds: unknown, rawId: unknown): number[] => {
+    const uniq = (arr: number[]) => Array.from(new Set(arr));
+    if (Array.isArray(rawIds)) return uniq(rawIds.map((v) => Number(v)).filter(Number.isFinite));
+    if (typeof rawIds === "string") {
+      const trimmed = rawIds.trim();
+      if (!trimmed) return typeof rawId === "number" ? [rawId] : [];
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) return uniq(parsed.map((v) => Number(v)).filter(Number.isFinite));
+        if (typeof parsed === "number" && Number.isFinite(parsed)) return [parsed];
+        if (typeof parsed === "string") {
+          return uniq(
+            parsed
+              .replace(/[\[\]]/g, "")
+              .split(",")
+              .map((v) => Number(v.trim()))
+              .filter(Number.isFinite)
+          );
+        }
+      } catch {
+        return uniq(
+          trimmed
+            .replace(/[\[\]]/g, "")
+            .split(",")
+            .map((v) => Number(v.trim()))
+            .filter(Number.isFinite)
+        );
+      }
+    }
+    if (typeof rawId === "number") return [rawId];
+    return [];
+  };
+
+  const assigneeUsers = useMemo(
+    () => (users || []).filter((user) => user.role !== "admin"),
+    [users]
+  );
+
+  const filteredAssigneeUsers = useMemo(() => {
+    const q = assigneeSearch.trim().toLowerCase();
+    if (!q) return assigneeUsers;
+    return assigneeUsers.filter((u) =>
+      `${u.name} ${u.email}`.toLowerCase().includes(q)
+    );
+  }, [assigneeUsers, assigneeSearch]);
+
+  const displayedAssigneeUsers = useMemo(() => {
+    if (assigneeSearch.trim()) return filteredAssigneeUsers;
+
+    const selectedUsers = assigneeUsers.filter((u) => assignedToIds.includes(u.id));
+    const topUsers = assigneeUsers.filter((u) => !assignedToIds.includes(u.id)).slice(0, 5);
+    const combined = [...selectedUsers, ...topUsers];
+    const seen = new Set<number>();
+    return combined.filter((u) => {
+      if (seen.has(u.id)) return false;
+      seen.add(u.id);
+      return true;
+    });
+  }, [assigneeSearch, filteredAssigneeUsers, assigneeUsers, assignedToIds]);
 
   useEffect(() => {
     if (task) {
@@ -73,6 +136,7 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
         status: task.status,
         completed: task.completed,
         assignedToId: task.assignedToId || undefined,
+        assignedToIds: parseAssignedToIds((task as any).assignedToIds, task.assignedToId),
         attachments: normalizedAttachments,
         dueDate: formattedDueDate,
       });
@@ -84,6 +148,7 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
         status: "todo",
         completed: false,
         assignedToId: undefined,
+        assignedToIds: [],
         attachments: undefined,
         dueDate: undefined,
       });
@@ -93,12 +158,21 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
   const isPending = createTask.isPending || updateTask.isPending;
 
   async function onSubmit(data: InsertTask) {
+    const currentAssignedToIds = form.getValues("assignedToIds");
+    const normalizedAssignedToIds = Array.isArray(currentAssignedToIds)
+      ? Array.from(new Set(currentAssignedToIds.map((id) => Number(id)).filter((id) => Number.isFinite(id))))
+      : (data.assignedToId ? [data.assignedToId] : []);
+    const payload: InsertTask = {
+      ...data,
+      assignedToIds: normalizedAssignedToIds,
+      assignedToId: normalizedAssignedToIds.length > 0 ? normalizedAssignedToIds[0] : undefined,
+    };
     try {
       if (task) {
-        await updateTask.mutateAsync({ id: task.id, ...data });
+        await updateTask.mutateAsync({ id: task.id, ...payload });
         toast({ title: "Task updated", description: "Changes saved successfully." });
       } else {
-        await createTask.mutateAsync(data);
+        await createTask.mutateAsync(payload);
         toast({ title: "Task created", description: "New task added to your board." });
       }
       onOpenChange(false);
@@ -210,31 +284,59 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
                 <div className="grid grid-cols-1 gap-4">
                   <FormField
                     control={form.control}
-                    name="assignedToId"
+                    name="assignedToIds"
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel className="flex items-center gap-2">
                           <UserIcon className="w-3 h-3" />
-                          Assigned To
+                          Assigned To (Multiple)
                         </FormLabel>
-                        <Select
-                          onValueChange={(val) => field.onChange(val === "none" ? undefined : parseInt(val))}
-                          value={field.value?.toString() || "none"}
-                        >
-                          <FormControl>
-                            <SelectTrigger className="h-11">
-                              <SelectValue placeholder="Unassigned" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            <SelectItem value="none">Unassigned</SelectItem>
-                            {users?.filter(user => user.role !== 'admin').map(user => (
-                              <SelectItem key={user.id} value={user.id.toString()}>
-                                {user.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        <Input
+                          value={assigneeSearch}
+                          onChange={(e) => setAssigneeSearch(e.target.value)}
+                          placeholder="Search user..."
+                          className="h-9"
+                        />
+                        <div className="rounded-md border p-3 space-y-2 max-h-44 overflow-y-auto">
+                          {displayedAssigneeUsers.map((user) => {
+                            const checked = (field.value || []).includes(user.id);
+                            return (
+                              <label key={user.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={(e) => {
+                                    const current = field.value || [];
+                                    const next = e.target.checked
+                                      ? Array.from(new Set([...current, user.id]))
+                                      : current.filter((id) => id !== user.id);
+                                    form.setValue("assignedToIds", next, {
+                                      shouldDirty: true,
+                                      shouldTouch: true,
+                                    });
+                                    field.onChange(next);
+                                    form.setValue("assignedToId", next.length > 0 ? next[0] : undefined, {
+                                      shouldDirty: true,
+                                      shouldTouch: true,
+                                    });
+                                  }}
+                                  className="h-4 w-4"
+                                />
+                                <span>{user.name}</span>
+                              </label>
+                            );
+                          })}
+                          {displayedAssigneeUsers.length === 0 && (
+                            <p className="text-xs text-muted-foreground">
+                              {assigneeSearch.trim() ? "No user found." : "No users available."}
+                            </p>
+                          )}
+                        </div>
+                        {!assigneeSearch.trim() && filteredAssigneeUsers.length > 5 && (
+                          <p className="text-[11px] text-muted-foreground">
+                            Selected users stay visible. Other users are limited to first 5; use search to find more.
+                          </p>
+                        )}
                         <FormMessage />
                       </FormItem>
                     )}

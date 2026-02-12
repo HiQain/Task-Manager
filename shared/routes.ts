@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { insertTaskSchema, insertUserSchema, tasks, users } from './schema';
+import { insertMessageSchema, insertTaskSchema, insertUserSchema, messages, tasks, users } from './schema';
 
 export const errorSchemas = {
   validation: z.object({
@@ -111,6 +111,54 @@ export const api = {
       responses: {
         204: z.void(),
         404: errorSchemas.notFound,
+      },
+    },
+  },
+  chats: {
+    users: {
+      method: 'GET' as const,
+      path: '/api/chats/users',
+      responses: {
+        200: z.array(z.custom<typeof users.$inferSelect>()),
+      },
+    },
+    unread: {
+      method: 'GET' as const,
+      path: '/api/chats/unread',
+      responses: {
+        200: z.object({
+          total: z.number(),
+          byUser: z.record(z.string(), z.number()),
+        }),
+        401: errorSchemas.notFound,
+      },
+    },
+    list: {
+      method: 'GET' as const,
+      path: '/api/chats/messages/:userId',
+      responses: {
+        200: z.array(z.custom<typeof messages.$inferSelect>()),
+        400: errorSchemas.validation,
+        401: errorSchemas.notFound,
+      },
+    },
+    send: {
+      method: 'POST' as const,
+      path: '/api/chats/messages',
+      input: insertMessageSchema.pick({ toUserId: true, content: true }),
+      responses: {
+        201: z.custom<typeof messages.$inferSelect>(),
+        400: errorSchemas.validation,
+        401: errorSchemas.notFound,
+      },
+    },
+    markRead: {
+      method: 'POST' as const,
+      path: '/api/chats/read/:userId',
+      responses: {
+        200: z.object({ success: z.boolean() }),
+        400: errorSchemas.validation,
+        401: errorSchemas.notFound,
       },
     },
   },

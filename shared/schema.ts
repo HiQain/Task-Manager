@@ -19,9 +19,19 @@ export const tasks = pgTable("tasks", {
   priority: text("priority").notNull().default("medium"), // low, medium, high
   completed: boolean("completed").default(false),
   assignedToId: integer("assigned_to_id").references(() => users.id),
+  assignedToIds: text("assigned_to_ids").default("[]"),
   createdById: integer("created_by_id").references(() => users.id),
   attachments: text("attachments").default("[]"),
   dueDate: timestamp("due_date"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const messages = pgTable("messages", {
+  id: serial("id").primaryKey(),
+  fromUserId: integer("from_user_id").notNull().references(() => users.id),
+  toUserId: integer("to_user_id").notNull().references(() => users.id),
+  content: text("content").notNull(),
+  readAt: timestamp("read_at"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -36,6 +46,12 @@ export const insertTaskSchema = createInsertSchema(tasks)
   .extend({
     attachments: z.array(z.object({ name: z.string(), data: z.string(), type: z.string(), reason: z.string().optional() })).optional(),
     dueDate: z.string().nullable().optional(),
+    assignedToIds: z.array(z.number()).optional(),
+  });
+export const insertMessageSchema = createInsertSchema(messages)
+  .omit({ id: true, createdAt: true })
+  .extend({
+    content: z.string().min(1, "Message is required").max(1000, "Message is too long"),
   });
 
 export type User = typeof users.$inferSelect;
@@ -43,3 +59,5 @@ export type InsertUser = z.infer<typeof insertUserSchema>;
 export type Task = typeof tasks.$inferSelect;
 export type InsertTask = z.infer<typeof insertTaskSchema>;
 export type UpdateTaskRequest = Partial<InsertTask>;
+export type Message = typeof messages.$inferSelect;
+export type InsertMessage = z.infer<typeof insertMessageSchema>;

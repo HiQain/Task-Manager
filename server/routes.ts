@@ -5,6 +5,7 @@ import { api } from "@shared/routes";
 import { z } from "zod";
 import crypto from "crypto";
 import session from "express-session";
+import { WebSocketServer, WebSocket } from "ws";
 import "express-session";
 
 declare module "express-session" {
@@ -33,6 +34,56 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  const wsClientsByUserId = new Map<number, Set<WebSocket>>();
+
+  const emitToUser = (userId: number, payload: Record<string, unknown>) => {
+    const clients = wsClientsByUserId.get(userId);
+    if (!clients || clients.size === 0) return;
+    const message = JSON.stringify(payload);
+    clients.forEach((client) => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(message);
+      }
+    });
+  };
+
+  const pushUnreadUpdate = async (userId: number) => {
+    const counts = await storage.getUnreadCountsForUser(userId);
+    emitToUser(userId, { type: "unread:update", payload: counts });
+  };
+
+  const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
+  wss.on("connection", async (socket, req) => {
+    const url = new URL(req.url || "", "http://localhost");
+    const userId = Number(url.searchParams.get("userId"));
+    if (!Number.isFinite(userId)) {
+      socket.close();
+      return;
+    }
+
+    const existing = await storage.getUser(userId);
+    if (!existing) {
+      socket.close();
+      return;
+    }
+
+    if (!wsClientsByUserId.has(userId)) {
+      wsClientsByUserId.set(userId, new Set<WebSocket>());
+    }
+    wsClientsByUserId.get(userId)!.add(socket);
+
+    await pushUnreadUpdate(userId);
+
+    socket.on("close", () => {
+      const clients = wsClientsByUserId.get(userId);
+      if (!clients) return;
+      clients.delete(socket);
+      if (clients.size === 0) {
+        wsClientsByUserId.delete(userId);
+      }
+    });
+  });
+
   // Session middleware
   app.use(
     session({
@@ -201,6 +252,106 @@ export async function registerRoutes(
     }
     await storage.deleteTask(id);
     res.status(204).send();
+  });
+
+  // Chat API
+  app.get(api.chats.users.path, async (req, res) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const chatUsers = await storage.getChatUsers(req.user.id);
+    res.json(chatUsers);
+  });
+
+  app.get(api.chats.unread.path, async (req, res) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const counts = await storage.getUnreadCountsForUser(req.user.id);
+    res.json(counts);
+  });
+
+  app.get(api.chats.list.path, async (req, res) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const otherUserId = Number(req.params.userId);
+    if (!Number.isFinite(otherUserId)) {
+      return res.status(400).json({ message: "Invalid user id" });
+    }
+    if (otherUserId === req.user.id) {
+      return res.status(400).json({ message: "Cannot open chat with yourself" });
+    }
+    const otherUser = await storage.getUser(otherUserId);
+    if (!otherUser) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    const messages = await storage.getMessagesBetweenUsers(req.user.id, otherUserId);
+    res.json(messages);
+  });
+
+  app.post(api.chats.markRead.path, async (req, res) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const otherUserId = Number(req.params.userId);
+    if (!Number.isFinite(otherUserId)) {
+      return res.status(400).json({ message: "Invalid user id" });
+    }
+    if (otherUserId === req.user.id) {
+      return res.status(400).json({ message: "Cannot mark self chat as read" });
+    }
+    const otherUser = await storage.getUser(otherUserId);
+    if (!otherUser) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    await storage.markMessagesAsRead(req.user.id, otherUserId);
+    await pushUnreadUpdate(req.user.id);
+    await pushUnreadUpdate(otherUserId);
+    emitToUser(otherUserId, {
+      type: "chat:read",
+      payload: { userId: req.user.id },
+    });
+    res.json({ success: true });
+  });
+
+  app.post(api.chats.send.path, async (req, res) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    try {
+      const input = api.chats.send.input.parse(req.body);
+      if (input.toUserId === req.user.id) {
+        return res.status(400).json({ message: "Cannot send message to yourself" });
+      }
+      const recipient = await storage.getUser(input.toUserId);
+      if (!recipient) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      const message = await storage.createMessage({
+        ...input,
+        fromUserId: req.user.id,
+      });
+      emitToUser(input.toUserId, {
+        type: "message:new",
+        payload: { fromUserId: req.user.id, toUserId: input.toUserId },
+      });
+      emitToUser(req.user.id, {
+        type: "message:new",
+        payload: { fromUserId: req.user.id, toUserId: input.toUserId },
+      });
+      await pushUnreadUpdate(req.user.id);
+      await pushUnreadUpdate(input.toUserId);
+      res.status(201).json(message);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({
+          message: err.errors[0].message,
+          field: err.errors[0].path.join("."),
+        });
+      }
+      throw err;
+    }
   });
 
   // Seed Data

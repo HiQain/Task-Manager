@@ -18,7 +18,21 @@ export default function Overview() {
   // ===== USER VIEW: Simple Kanban Board with Drag & Drop (Assigned Tasks Only) =====
   if (user?.role !== "admin") {
     // Filter tasks assigned to current user only
-    const assignedTasks = tasks?.filter(t => t.assignedToId === user?.id) || [];
+    const assignedTasks = tasks?.filter((t) => {
+      const rawAssignedToIds = (t as any).assignedToIds;
+      let assignedToIds: number[] = [];
+      if (Array.isArray(rawAssignedToIds)) assignedToIds = rawAssignedToIds;
+      else if (typeof rawAssignedToIds === "string") {
+        try {
+          const parsed = JSON.parse(rawAssignedToIds);
+          if (Array.isArray(parsed)) assignedToIds = parsed;
+        } catch {
+          assignedToIds = [];
+        }
+      }
+      if (assignedToIds.length === 0 && t.assignedToId) assignedToIds = [t.assignedToId];
+      return !!user?.id && assignedToIds.includes(user.id);
+    }) || [];
     const todoTasks = assignedTasks.filter(t => t.status === 'todo');
     const inProgressTasks = assignedTasks.filter(t => t.status === 'in_progress');
     const doneTasks = assignedTasks.filter(t => t.status === 'done');
