@@ -74,6 +74,29 @@ export async function registerRoutes(
 
     await pushUnreadUpdate(userId);
 
+    socket.on("message", (raw) => {
+      try {
+        const parsed = JSON.parse(String(raw || "{}"));
+        const type = parsed?.type;
+        const payload = parsed?.payload || {};
+
+        if (type === "webrtc:signal") {
+          const toUserId = Number(payload?.toUserId);
+          if (!Number.isFinite(toUserId) || toUserId === userId) return;
+
+          emitToUser(toUserId, {
+            type: "webrtc:signal",
+            payload: {
+              fromUserId: userId,
+              signal: payload?.signal,
+            },
+          });
+        }
+      } catch {
+        // ignore invalid socket payload
+      }
+    });
+
     socket.on("close", () => {
       const clients = wsClientsByUserId.get(userId);
       if (!clients) return;
