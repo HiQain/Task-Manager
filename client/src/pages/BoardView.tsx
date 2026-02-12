@@ -3,6 +3,7 @@ import { DragDropContext, Droppable, DropResult } from "@hello-pangea/dnd";
 import { useTasks, useUpdateTask, useDeleteTask } from "@/hooks/use-tasks";
 import { TaskCard } from "@/components/TaskCard";
 import { TaskDialog } from "@/components/TaskDialog";
+import { TaskDetailDialog } from "@/components/TaskDetailDialog";
 import { type Task } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, Plus } from "lucide-react";
@@ -23,6 +24,8 @@ export default function BoardView() {
 
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [isDetailDialogOpen, setIsDetailDialogOpen] = useState(false);
 
   const onDragEnd = (result: DropResult) => {
     const { destination, source, draggableId } = result;
@@ -56,6 +59,13 @@ export default function BoardView() {
       deleteTask.mutate(id, {
         onSuccess: () => toast({ title: "Task deleted" }),
       });
+    }
+  };
+
+  const handleView = (task: Task) => {
+    if (user?.role !== "admin") {
+      setSelectedTask(task);
+      setIsDetailDialogOpen(true);
     }
   };
 
@@ -107,6 +117,7 @@ export default function BoardView() {
                           index={index}
                           onEdit={handleEdit}
                           onDelete={handleDelete}
+                          onView={handleView}
                         />
                       ))}
                       {provided.placeholder}
@@ -139,6 +150,15 @@ export default function BoardView() {
           if (!open) setEditingTask(null);
         }}
         task={editingTask || undefined}
+      />
+
+      <TaskDetailDialog
+        open={isDetailDialogOpen}
+        onOpenChange={(open) => {
+          setIsDetailDialogOpen(open);
+          if (!open) setSelectedTask(null);
+        }}
+        task={selectedTask}
       />
     </div>
   );

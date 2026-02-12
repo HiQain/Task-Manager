@@ -20,6 +20,8 @@ export const tasks = pgTable("tasks", {
   completed: boolean("completed").default(false),
   assignedToId: integer("assigned_to_id").references(() => users.id),
   createdById: integer("created_by_id").references(() => users.id),
+  attachments: text("attachments").default("[]"),
+  dueDate: timestamp("due_date"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -29,10 +31,12 @@ export const insertUserSchema = createInsertSchema(users)
     password: z.string().min(6, "Password must be at least 6 characters"),
     role: z.enum(["user", "admin"]).default("user"),
   });
-export const insertTaskSchema = createInsertSchema(tasks).omit({
-  id: true,
-  createdAt: true
-});
+export const insertTaskSchema = createInsertSchema(tasks)
+  .omit({ id: true, createdAt: true })
+  .extend({
+    attachments: z.array(z.object({ name: z.string(), data: z.string(), type: z.string(), reason: z.string().optional() })).optional(),
+    dueDate: z.string().nullable().optional(),
+  });
 
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;

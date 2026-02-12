@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { insertTaskSchema, type InsertTask } from "@shared/schema";
@@ -25,6 +25,8 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
   const updateTask = useUpdateTask();
   const { data: users } = useUsers();
 
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
   const form = useForm<InsertTask>({
     resolver: zodResolver(insertTaskSchema),
     defaultValues: {
@@ -34,11 +36,19 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
       status: "todo",
       completed: false,
       assignedToId: undefined,
+      attachments: undefined,
+      dueDate: undefined,
     },
   });
 
+  const attachments = form.watch("attachments") || [];
+  const dueDate = form.watch("dueDate");
+
   useEffect(() => {
     if (task) {
+      const formattedDueDate = task.dueDate
+        ? new Date(task.dueDate).toISOString().split("T")[0]
+        : undefined;
       form.reset({
         title: task.title,
         description: task.description || "",
@@ -46,6 +56,8 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
         status: task.status,
         completed: task.completed,
         assignedToId: task.assignedToId || undefined,
+        attachments: (task.attachments || []).map((a: any) => ({ ...(typeof a === 'string' ? { name: a, data: a, type: a.startsWith('data:image') ? 'image' : 'file' } : a), reason: (a as any)?.reason || "" })),
+        dueDate: formattedDueDate,
       });
     } else {
       form.reset({
@@ -55,6 +67,8 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
         status: "todo",
         completed: false,
         assignedToId: undefined,
+        attachments: undefined,
+        dueDate: undefined,
       });
     }
   }, [task, open, form]);
@@ -207,6 +221,86 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
                         <FormMessage />
                       </FormItem>
                     )}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <FormLabel>Attachments</FormLabel>
+                  {/* Hidden single-file input; use button to trigger for one-at-a-time selection */}
+                  <input
+                    type="file"
+                    accept="image/*,application/*"
+                    className="hidden"
+                    ref={(el) => (fileInputRef.current = el)}
+                    onChange={async (e) => {
+                      const file = e.target.files && e.target.files[0];
+                      if (!file) return;
+                      const readFile = (file: File) => new Promise<{ name: string; data: string; type: string; reason?: string }>((res, rej) => {
+                        const reader = new FileReader();
+                        reader.onload = () => res({ name: file.name, data: String(reader.result), type: file.type, reason: "" });
+                        reader.onerror = rej;
+                        reader.readAsDataURL(file);
+                      });
+                      try {
+                        const item = await readFile(file);
+                        const current = (form.getValues("attachments") as any[]) || [];
+                        form.setValue("attachments" as any, [...current, item] as any);
+                      } finally {
+                        // reset input so same file can be selected again if needed
+                        if (fileInputRef.current) fileInputRef.current.value = "";
+                      }
+                    }}
+                  />
+                  <div className="flex items-center gap-2">
+                    <Button type="button" variant="outline" onClick={() => fileInputRef.current?.click()} className="h-9">
+                      Add attachment
+                    </Button>
+                    <Button type="button" variant="ghost" className="h-9" onClick={() => fileInputRef.current?.click()}>
+                      Add more
+                    </Button>
+                  </div>
+
+                  {/* Previews */}
+                  <div className="space-y-3">
+                    {attachments.map((a: any, idx: number) => (
+                      <div key={idx} className="w-full flex flex-col gap-2">
+                        <div className="w-24 h-24 border rounded overflow-hidden flex items-center justify-center bg-white">
+                          {a.type.startsWith("image/") ? (
+                            <img src={a.data} alt={a.name} className="object-cover w-full h-full" />
+                          ) : (
+                            <a href={a.data} download={a.name} className="text-xs p-2 text-center">
+                              {a.name}
+                            </a>
+                          )}
+                        </div>
+
+                        <input
+                          placeholder="Type Message For Image..."
+                          value={a.reason || ""}
+                          onChange={(e) => {
+                            const updated = [...attachments];
+                            updated[idx] = { ...updated[idx], reason: e.target.value };
+
+                            form.setValue("attachments" as any, updated as any, {
+                              shouldDirty: true,
+                              shouldTouch: true,
+                            });
+                          }}
+                          className="h-10 rounded-md border px-2 w-full"
+                        />
+                      </div>
+                    ))}
+                  </div>
+
+                </div>
+
+                <div>
+                  <FormLabel>Due Date</FormLabel>
+                  <input
+                    type="date"
+                    value={dueDate || ""}
+                    onChange={(e) => form.setValue("dueDate" as any, e.target.value || undefined)}
+                    className="h-10 rounded-md border px-2 w-full"
                   />
                 </div>
               </form>

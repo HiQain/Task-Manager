@@ -18,6 +18,7 @@ interface TaskCardProps {
   index: number;
   onEdit: (task: Task) => void;
   onDelete: (id: number) => void;
+  onView?: (task: Task) => void;
 }
 
 const priorityColors = {
@@ -26,7 +27,7 @@ const priorityColors = {
   high: "bg-orange-50 text-orange-600 border-orange-200",
 };
 
-export function TaskCard({ task, index, onEdit, onDelete }: TaskCardProps) {
+export function TaskCard({ task, index, onEdit, onDelete, onView }: TaskCardProps) {
   const { data: users } = useUsers();
   const assignedUser = users?.find(u => u.id === task.assignedToId);
   const { user } = useAuth();
@@ -40,6 +41,7 @@ export function TaskCard({ task, index, onEdit, onDelete }: TaskCardProps) {
           {...provided.dragHandleProps}
           style={provided.draggableProps.style}
           className="mb-3 group"
+          onClick={() => onView && onView(task)}
         >
           <Card
             className={`
@@ -55,15 +57,28 @@ export function TaskCard({ task, index, onEdit, onDelete }: TaskCardProps) {
 
                 <DropdownMenu>
                   {user?.role === "admin" && (
-                    <DropdownMenuTrigger className="opacity-0 group-hover:opacity-100 transition-opacity focus:opacity-100 outline-none">
+                    <DropdownMenuTrigger
+                      className="opacity-0 group-hover:opacity-100 transition-opacity focus:opacity-100 outline-none"
+                      onClick={(e) => e.stopPropagation()}
+                    >
                       <MoreHorizontal className="w-4 h-4 text-muted-foreground hover:text-foreground" />
                     </DropdownMenuTrigger>
                   )}
                   <DropdownMenuContent align="end">
-                    <DropdownMenuItem onClick={() => onEdit(task)}>Edit</DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onEdit(task);
+                      }}
+                    >
+                      Edit
+                    </DropdownMenuItem>
                     <DropdownMenuItem
                       className="text-destructive focus:text-destructive"
-                      onClick={() => onDelete(task.id)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDelete(task.id);
+                      }}
                     >
                       Delete
                     </DropdownMenuItem>
@@ -75,6 +90,38 @@ export function TaskCard({ task, index, onEdit, onDelete }: TaskCardProps) {
               <p className="text-xs text-muted-foreground line-clamp-2 mb-3 min-h-[1.5em]">
                 {task.description || "No description provided."}
               </p>
+
+              {/* Attachments preview */}
+              {(() => {
+                const raw = (task as any).attachments;
+                let attachments: any[] = [];
+                if (Array.isArray(raw)) attachments = raw;
+                else if (typeof raw === 'string') {
+                  try { attachments = JSON.parse(raw || '[]'); } catch { attachments = []; }
+                }
+                if (!attachments || attachments.length === 0) return null;
+                return (
+                  <div className="flex gap-2 mb-3">
+                    {attachments.slice(0, 4).map((a: any, i: number) => (
+                      <div key={i} className="w-12 h-12 border rounded overflow-hidden bg-white flex items-center justify-center">
+                        {typeof a === 'string' ? (
+                          a.startsWith('data:image') ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={a} alt={`attachment-${i}`} className="object-cover w-full h-full" />
+                          ) : (
+                            <a href={a} className="text-xs p-1">Open</a>
+                          )
+                        ) : a?.type?.startsWith('image/') ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={a.data} alt={a.name} className="object-cover w-full h-full" />
+                        ) : (
+                          <a href={a.data} download={a.name} className="text-xs p-1">{a.name}</a>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
 
               <div className="flex items-center text-xs text-muted-foreground pt-3 border-t border-border/50 mt-auto">
                 {assignedUser ? (
@@ -95,7 +142,7 @@ export function TaskCard({ task, index, onEdit, onDelete }: TaskCardProps) {
                 <div className="ml-auto flex items-center gap-2">
                   <div className="flex items-center">
                     <Clock className="w-3 h-3 mr-1" />
-                    <span>{new Date(task.createdAt!).toLocaleDateString()}</span>
+                    <span>{new Date(task.dueDate!).toLocaleDateString()}</span>
                   </div>
                   <div className="opacity-0 group-hover:opacity-100 transition-opacity">
                     <GripVertical className="w-4 h-4 text-muted-foreground/50" />
