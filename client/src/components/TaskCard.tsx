@@ -3,14 +3,15 @@ import { type Task } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Clock, GripVertical, MoreHorizontal, User as UserIcon } from "lucide-react";
-import { 
-  DropdownMenu, 
-  DropdownMenuContent, 
-  DropdownMenuItem, 
-  DropdownMenuTrigger 
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger
 } from "@/components/ui/dropdown-menu";
 import { useUsers } from "@/hooks/use-users";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { useAuth } from "@/hooks/use-auth";
 
 interface TaskCardProps {
   task: Task;
@@ -28,6 +29,7 @@ const priorityColors = {
 export function TaskCard({ task, index, onEdit, onDelete }: TaskCardProps) {
   const { data: users } = useUsers();
   const assignedUser = users?.find(u => u.id === task.assignedToId);
+  const { user } = useAuth();
 
   return (
     <Draggable draggableId={String(task.id)} index={index}>
@@ -39,7 +41,7 @@ export function TaskCard({ task, index, onEdit, onDelete }: TaskCardProps) {
           style={provided.draggableProps.style}
           className="mb-3 group"
         >
-          <Card 
+          <Card
             className={`
               border-border/60 shadow-sm hover:shadow-md transition-all duration-200 cursor-grab active:cursor-grabbing
               ${snapshot.isDragging ? "shadow-xl ring-2 ring-primary/20 rotate-2" : ""}
@@ -50,14 +52,16 @@ export function TaskCard({ task, index, onEdit, onDelete }: TaskCardProps) {
                 <Badge variant="outline" className={`capitalize font-medium ${priorityColors[task.priority as keyof typeof priorityColors]}`}>
                   {task.priority}
                 </Badge>
-                
+
                 <DropdownMenu>
-                  <DropdownMenuTrigger className="opacity-0 group-hover:opacity-100 transition-opacity focus:opacity-100 outline-none">
-                    <MoreHorizontal className="w-4 h-4 text-muted-foreground hover:text-foreground" />
-                  </DropdownMenuTrigger>
+                  {user?.role === "admin" && (
+                    <DropdownMenuTrigger className="opacity-0 group-hover:opacity-100 transition-opacity focus:opacity-100 outline-none">
+                      <MoreHorizontal className="w-4 h-4 text-muted-foreground hover:text-foreground" />
+                    </DropdownMenuTrigger>
+                  )}
                   <DropdownMenuContent align="end">
                     <DropdownMenuItem onClick={() => onEdit(task)}>Edit</DropdownMenuItem>
-                    <DropdownMenuItem 
+                    <DropdownMenuItem
                       className="text-destructive focus:text-destructive"
                       onClick={() => onDelete(task.id)}
                     >

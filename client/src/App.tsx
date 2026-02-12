@@ -5,40 +5,80 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Sidebar } from "@/components/Sidebar";
 import { TaskDialog } from "@/components/TaskDialog";
+import { ProtectedRoute } from "@/components/ProtectedRoute";
+import { useAuth } from "@/hooks/use-auth";
 import { useState } from "react";
 import NotFound from "@/pages/not-found";
+import Login from "@/pages/Login";
 
 // Pages
 import Overview from "@/pages/Overview";
 import BoardView from "@/pages/BoardView";
 import ListView from "@/pages/ListView";
 import Users from "@/pages/Users";
+import AdminConsole from "@/pages/AdminConsole";
 
 function Router() {
+  const { user } = useAuth();
+
   return (
     <Switch>
-      <Route path="/" component={Overview} />
-      <Route path="/board" component={BoardView} />
-      <Route path="/list" component={ListView} />
-      <Route path="/users" component={Users} />
+      <Route path="/login" component={Login} />
+
+      <Route path="/">
+        <ProtectedRoute>
+          {user?.role === "admin" ? <Overview /> : <BoardView />}
+        </ProtectedRoute>
+      </Route>
+
+      <Route path="/board">
+        <ProtectedRoute>
+          <BoardView />
+        </ProtectedRoute>
+      </Route>
+
+      <Route path="/list">
+        <ProtectedRoute>
+          <ListView />
+        </ProtectedRoute>
+      </Route>
+
+      <Route path="/users">
+        <ProtectedRoute>
+          <Users />
+        </ProtectedRoute>
+      </Route>
+
+      <Route path="/admin">
+        <ProtectedRoute requiredRole="admin">
+          <AdminConsole />
+        </ProtectedRoute>
+      </Route>
+
       <Route component={NotFound} />
     </Switch>
   );
 }
 
 function Layout({ children }: { children: React.ReactNode }) {
+  const { user, logout } = useAuth();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [location] = useLocation();
 
   const getPageTitle = (path: string) => {
     switch (path) {
       case "/": return "Overview";
-      case "/board": return "Kanban Board";
+      case "/board": return "Hiqain Board";
       case "/list": return "All Tasks";
       case "/users": return "Team Management";
       default: return "";
     }
   };
+
+  // Show logout for authenticated users only
+  if (!user) {
+    return <>{children}</>;
+  }
 
   return (
     <div className="min-h-screen bg-background font-sans flex">
@@ -51,18 +91,21 @@ function Layout({ children }: { children: React.ReactNode }) {
             <p className="text-muted-foreground mt-1">Manage your team's work efficiently.</p>
           </div>
 
-          {/* <div className="flex items-center gap-3">
-            <div className="flex -space-x-2">
-              {[1, 2, 3].map((i) => (
-                <div key={i} className="w-8 h-8 rounded-full border-2 border-background bg-muted flex items-center justify-center text-xs font-medium">
-                  U{i}
-                </div>
-              ))}
-              <div className="w-8 h-8 rounded-full border-2 border-background bg-slate-100 flex items-center justify-center text-xs font-medium text-muted-foreground">
-                +2
-              </div>
+          <div className="flex items-center gap-4">
+            <div className="text-right">
+              <p className="text-sm font-medium text-foreground">{user.name}</p>
+              <p className="text-xs text-muted-foreground capitalize">{user.role}</p>
             </div>
-          </div> */}
+            <button
+              onClick={() => {
+                logout();
+                window.location.href = '/login';
+              }}
+              className="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg text-sm font-medium transition-colors"
+            >
+              Logout
+            </button>
+          </div>
         </header>
 
         {children}

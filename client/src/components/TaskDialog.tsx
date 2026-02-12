@@ -16,7 +16,7 @@ import { Loader2, User as UserIcon, Send } from "lucide-react";
 interface TaskDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  task?: { id: number } & InsertTask; 
+  task?: { id: number } & InsertTask;
 }
 
 export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
@@ -24,7 +24,7 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
   const createTask = useCreateTask();
   const updateTask = useUpdateTask();
   const { data: users } = useUsers();
-  
+
   const form = useForm<InsertTask>({
     resolver: zodResolver(insertTaskSchema),
     defaultValues: {
@@ -34,7 +34,6 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
       status: "todo",
       completed: false,
       assignedToId: undefined,
-      createdById: undefined,
     },
   });
 
@@ -47,7 +46,6 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
         status: task.status,
         completed: task.completed,
         assignedToId: task.assignedToId || undefined,
-        createdById: task.createdById || undefined,
       });
     } else {
       form.reset({
@@ -57,7 +55,6 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
         status: "todo",
         completed: false,
         assignedToId: undefined,
-        createdById: undefined,
       });
     }
   }, [task, open, form]);
@@ -75,8 +72,8 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
       }
       onOpenChange(false);
     } catch (error) {
-      toast({ 
-        title: "Error", 
+      toast({
+        title: "Error",
         description: error instanceof Error ? error.message : "Something went wrong",
         variant: "destructive"
       });
@@ -111,7 +108,7 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
                     </FormItem>
                   )}
                 />
-                
+
                 <FormField
                   control={form.control}
                   name="description"
@@ -119,11 +116,11 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
                     <FormItem>
                       <FormLabel>Description</FormLabel>
                       <FormControl>
-                        <Textarea 
-                          placeholder="Add details about this task..." 
-                          className="resize-none min-h-[100px]" 
-                          {...field} 
-                          value={field.value || ""} 
+                        <Textarea
+                          placeholder="Add details about this task..."
+                          className="resize-none min-h-[100px]"
+                          {...field}
+                          value={field.value || ""}
                         />
                       </FormControl>
                       <FormMessage />
@@ -179,7 +176,7 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 gap-4">
                   <FormField
                     control={form.control}
                     name="assignedToId"
@@ -189,8 +186,8 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
                           <UserIcon className="w-3 h-3" />
                           Assigned To
                         </FormLabel>
-                        <Select 
-                          onValueChange={(val) => field.onChange(val === "none" ? undefined : parseInt(val))} 
+                        <Select
+                          onValueChange={(val) => field.onChange(val === "none" ? undefined : parseInt(val))}
                           value={field.value?.toString() || "none"}
                         >
                           <FormControl>
@@ -200,39 +197,7 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
                           </FormControl>
                           <SelectContent>
                             <SelectItem value="none">Unassigned</SelectItem>
-                            {users?.map(user => (
-                              <SelectItem key={user.id} value={user.id.toString()}>
-                                {user.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="createdById"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel className="flex items-center gap-2">
-                          <Send className="w-3 h-3" />
-                          Requested By
-                        </FormLabel>
-                        <Select 
-                          onValueChange={(val) => field.onChange(val === "none" ? undefined : parseInt(val))} 
-                          value={field.value?.toString() || "none"}
-                        >
-                          <FormControl>
-                            <SelectTrigger className="h-11">
-                              <SelectValue placeholder="System" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            <SelectItem value="none">System</SelectItem>
-                            {users?.map(user => (
+                            {users?.filter(user => user.role !== 'admin').map(user => (
                               <SelectItem key={user.id} value={user.id.toString()}>
                                 {user.name}
                               </SelectItem>
@@ -251,10 +216,10 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)} className="h-11">
               Cancel
             </Button>
-            <Button 
+            <Button
               form="task-form"
               type="submit"
-              disabled={isPending} 
+              disabled={isPending}
               className="h-11 min-w-[100px]"
             >
               {isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : task ? "Save Changes" : "Create Task"}

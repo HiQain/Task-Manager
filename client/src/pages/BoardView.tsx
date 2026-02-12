@@ -6,6 +6,7 @@ import { TaskDialog } from "@/components/TaskDialog";
 import { type Task } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, Plus } from "lucide-react";
+import { useAuth } from "@/hooks/use-auth";
 
 const COLUMNS = [
   { id: "todo", title: "To Do", color: "bg-slate-500" },
@@ -18,7 +19,8 @@ export default function BoardView() {
   const updateTask = useUpdateTask();
   const deleteTask = useDeleteTask();
   const { toast } = useToast();
-  
+  const { user } = useAuth();
+
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
 
@@ -29,11 +31,11 @@ export default function BoardView() {
     if (destination.droppableId === source.droppableId && destination.index === source.index) return;
 
     const newStatus = destination.droppableId;
-    
+
     // Optimistic update handled by React Query invalidation
-    updateTask.mutate({ 
-      id: parseInt(draggableId), 
-      status: newStatus 
+    updateTask.mutate({
+      id: parseInt(draggableId),
+      status: newStatus
     }, {
       onError: () => {
         toast({
@@ -108,17 +110,19 @@ export default function BoardView() {
                         />
                       ))}
                       {provided.placeholder}
-                      
-                      <button
-                        onClick={() => {
-                          setEditingTask(null);
-                          setIsDialogOpen(true);
-                        }}
-                        className="w-full py-2.5 flex items-center justify-center gap-2 text-sm text-muted-foreground hover:bg-background/80 hover:text-foreground rounded-lg border border-dashed border-border/60 hover:border-primary/50 transition-all mt-2"
-                      >
-                        <Plus className="w-4 h-4" />
-                        Add Task
-                      </button>
+
+                      {user?.role === "admin" && (
+                        <button
+                          onClick={() => {
+                            setEditingTask(null);
+                            setIsDialogOpen(true);
+                          }}
+                          className="w-full py-2.5 flex items-center justify-center gap-2 text-sm text-muted-foreground hover:bg-background/80 hover:text-foreground rounded-lg border border-dashed border-border/60 hover:border-primary/50 transition-all mt-2"
+                        >
+                          <Plus className="w-4 h-4" />
+                          Add Task
+                        </button>
+                      )}
                     </div>
                   )}
                 </Droppable>
@@ -128,8 +132,8 @@ export default function BoardView() {
         </div>
       </DragDropContext>
 
-      <TaskDialog 
-        open={isDialogOpen} 
+      <TaskDialog
+        open={isDialogOpen}
         onOpenChange={(open) => {
           setIsDialogOpen(open);
           if (!open) setEditingTask(null);

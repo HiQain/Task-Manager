@@ -9,13 +9,16 @@ import {
   type UpdateTaskRequest
 } from "@shared/schema";
 import { eq } from "drizzle-orm";
+import crypto from "crypto";
 
 export interface IStorage {
   // Users
   getUsers(): Promise<User[]>;
   getUser(id: number): Promise<User | undefined>;
+  getUserByEmail(email: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   deleteUser(id: number): Promise<void>;
+  clearAllUsers(): Promise<void>;
 
   // Tasks
   getTasks(): Promise<Task[]>;
@@ -23,6 +26,10 @@ export interface IStorage {
   createTask(task: InsertTask): Promise<Task>;
   updateTask(id: number, updates: UpdateTaskRequest): Promise<Task>;
   deleteTask(id: number): Promise<void>;
+}
+
+function hashPassword(password: string): string {
+  return crypto.createHash('sha256').update(password).digest('hex');
 }
 
 export class DatabaseStorage implements IStorage {
@@ -36,13 +43,26 @@ export class DatabaseStorage implements IStorage {
     return user;
   }
 
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.email, email));
+    return user;
+  }
+
   async createUser(insertUser: InsertUser): Promise<User> {
-    const [user] = await db.insert(users).values(insertUser).returning();
+    const userData = {
+      ...insertUser,
+      password: hashPassword(insertUser.password),
+    };
+    const [user] = await db.insert(users).values(userData).returning();
     return user;
   }
 
   async deleteUser(id: number): Promise<void> {
     await db.delete(users).where(eq(users.id, id));
+  }
+
+  async clearAllUsers(): Promise<void> {
+    await db.delete(users);
   }
 
   // Tasks Implementation
