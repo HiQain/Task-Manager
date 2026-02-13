@@ -45,7 +45,11 @@ export function useCreateTask() {
       }
       return api.tasks.create.responses[201].parse(await res.json());
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: [api.tasks.list.path] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [api.tasks.list.path] });
+      queryClient.invalidateQueries({ queryKey: [api.chats.groups.path] });
+      queryClient.invalidateQueries({ queryKey: [api.chats.groupsUnread.path] });
+    },
   });
 }
 
@@ -63,7 +67,11 @@ export function useUpdateTask() {
       if (!res.ok) throw new Error("Failed to update task");
       return api.tasks.update.responses[200].parse(await res.json());
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: [api.tasks.list.path] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [api.tasks.list.path] });
+      queryClient.invalidateQueries({ queryKey: [api.chats.groups.path] });
+      queryClient.invalidateQueries({ queryKey: [api.chats.groupsUnread.path] });
+    },
   });
 }
 
@@ -75,6 +83,10 @@ export function useDeleteTask() {
       const res = await fetch(url, { method: api.tasks.delete.method });
       if (!res.ok) throw new Error("Failed to delete task");
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: [api.tasks.list.path] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [api.tasks.list.path] });
+      queryClient.invalidateQueries({ queryKey: [api.chats.groups.path] });
+      queryClient.invalidateQueries({ queryKey: [api.chats.groupsUnread.path] });
+    },
   });
 }

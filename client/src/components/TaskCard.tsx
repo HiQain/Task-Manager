@@ -17,6 +17,7 @@ interface TaskCardProps {
   task: Task;
   index: number;
   canEdit: boolean;
+  canMove: boolean;
   onEdit: (task: Task) => void;
   onDelete: (id: number) => void;
   onView?: (task: Task) => void;
@@ -29,7 +30,18 @@ const priorityColors = {
   high: "bg-orange-50 text-orange-600 border-orange-200",
 };
 
-export function TaskCard({ task, index, canEdit, onEdit, onDelete, onView, onMessage }: TaskCardProps) {
+function formatDueDate(value?: string | Date | null): string {
+  if (!value) return "-";
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+
+  const day = date.getDate();
+  const month = date.toLocaleString("en-US", { month: "short" }).toLowerCase();
+  const year = date.getFullYear();
+  return `${day}/${month}/${year}`;
+}
+
+export function TaskCard({ task, index, canEdit, canMove, onEdit, onDelete, onView, onMessage }: TaskCardProps) {
   const { data: users } = useUsers();
   const { user } = useAuth();
   const rawAssignedToIds = (task as any).assignedToIds;
@@ -64,6 +76,7 @@ export function TaskCard({ task, index, canEdit, onEdit, onDelete, onView, onMes
     return `${createdByUser.name} assigned to ${assignedNames}`;
   })();
   const canOpenChat = (() => {
+    if (task.status === "done") return false;
     if (!user?.id) return false;
     const participantIds = new Set<number>(
       [task.createdById, ...assignedToIds].filter((id): id is number => typeof id === "number" && Number.isFinite(id))
@@ -73,12 +86,12 @@ export function TaskCard({ task, index, canEdit, onEdit, onDelete, onView, onMes
   })();
 
   return (
-    <Draggable draggableId={String(task.id)} index={index} isDragDisabled={!canEdit}>
+    <Draggable draggableId={String(task.id)} index={index} isDragDisabled={!canMove}>
       {(provided, snapshot) => (
         <div
           ref={provided.innerRef}
           {...provided.draggableProps}
-          {...(canEdit ? provided.dragHandleProps : {})}
+          {...(canMove ? provided.dragHandleProps : {})}
           style={provided.draggableProps.style}
           className="mb-3 group"
           onClick={() => onView && onView(task)}
@@ -86,7 +99,7 @@ export function TaskCard({ task, index, canEdit, onEdit, onDelete, onView, onMes
           <Card
             className={`
               border-border/60 shadow-sm hover:shadow-md transition-all duration-200
-              ${canEdit ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"}
+              ${canMove ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"}
               ${snapshot.isDragging ? "shadow-xl ring-2 ring-primary/20 rotate-2" : ""}
             `}
           >
@@ -218,9 +231,9 @@ export function TaskCard({ task, index, canEdit, onEdit, onDelete, onView, onMes
                 <div className="ml-auto flex items-center gap-2">
                   <div className="flex items-center">
                     <Clock className="w-3 h-3 mr-1" />
-                    <span>{new Date(task.dueDate!).toLocaleDateString()}</span>
+                    <span>{formatDueDate(task.dueDate as any)}</span>
                   </div>
-                  {canEdit && (
+                  {canMove && (
                     <div className="opacity-0 group-hover:opacity-100 transition-opacity">
                       <GripVertical className="w-4 h-4 text-muted-foreground/50" />
                     </div>

@@ -64,11 +64,15 @@ export default function BoardView() {
 
     const taskId = parseInt(draggableId);
     const draggedTask = visibleTasks.find((task) => task.id === taskId);
-    const canEditDraggedTask = !!user?.id && !!draggedTask && draggedTask.createdById === user.id;
-    if (!canEditDraggedTask) {
+    const canMoveDraggedTask = !!user?.id && !!draggedTask && (
+      user.role === "admin" ||
+      draggedTask.createdById === user.id ||
+      getAssignedToIds(draggedTask).includes(user.id)
+    );
+    if (!canMoveDraggedTask) {
       toast({
         title: "Read-only task",
-        description: "Only the task creator can edit task status.",
+        description: "Only participants can move this task.",
         variant: "destructive",
       });
       return;
@@ -346,6 +350,11 @@ export default function BoardView() {
                           task={task}
                           index={index}
                           canEdit={!!user?.id && task.createdById === user.id}
+                          canMove={!!user?.id && (
+                            user.role === "admin" ||
+                            task.createdById === user.id ||
+                            getAssignedToIds(task).includes(user.id)
+                          )}
                           onEdit={handleEdit}
                           onDelete={handleDelete}
                           onView={handleView}

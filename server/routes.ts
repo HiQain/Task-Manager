@@ -369,8 +369,16 @@ export async function registerRoutes(
       if (!existing) {
         return res.status(404).json({ message: 'Task not found' });
       }
-      if (existing.createdById !== req.user.id) {
-        return res.status(403).json({ message: "Only the task creator can edit this task" });
+      const isAdmin = req.user.role === "admin";
+      const isCreator = existing.createdById === req.user.id;
+      const isParticipant = canUserAccessTask(req.user, existing);
+      const updateKeys = Object.keys(input || {});
+      const isStatusOnlyUpdate = updateKeys.length > 0 && updateKeys.every((key) => key === "status" || key === "completed");
+
+      if (!isAdmin && !isCreator) {
+        if (!(isParticipant && isStatusOnlyUpdate)) {
+          return res.status(403).json({ message: "Only the task creator can edit this task" });
+        }
       }
 
       const { createdById: _createdById, ...safeInput } = (input as any) || {};
@@ -517,6 +525,7 @@ export async function registerRoutes(
     for (const group of groups) {
       const task = await storage.getTask(group.taskId);
       if (!task) continue;
+      if (task.status === "done") continue;
       const participantIds = getTaskParticipantIds(task);
       if (!participantIds.includes(req.user.id)) continue;
       result.push({ group, task, participantIds });
@@ -536,6 +545,7 @@ export async function registerRoutes(
     for (const group of groups) {
       const task = await storage.getTask(group.taskId);
       if (!task) continue;
+      if (task.status === "done") continue;
       const participantIds = getTaskParticipantIds(task);
       if (!participantIds.includes(req.user.id)) continue;
 
@@ -565,6 +575,9 @@ export async function registerRoutes(
     const task = await storage.getTask(taskId);
     if (!task) {
       return res.status(404).json({ message: "Task not found" });
+    }
+    if (task.status === "done") {
+      return res.status(400).json({ message: "Task group chat is unavailable for done tasks" });
     }
     if (!canUserAccessTask(req.user, task)) {
       return res.status(403).json({ message: "Not authorized to create this task group" });
@@ -597,6 +610,9 @@ export async function registerRoutes(
     if (!task) {
       return res.status(404).json({ message: "Task not found" });
     }
+    if (task.status === "done") {
+      return res.status(404).json({ message: "Task group not available for done tasks" });
+    }
     if (!canUserAccessTask(req.user, task)) {
       return res.status(403).json({ message: "Not authorized to access this task group" });
     }
@@ -619,6 +635,9 @@ export async function registerRoutes(
     const task = await storage.getTask(taskId);
     if (!task) {
       return res.status(404).json({ message: "Task not found" });
+    }
+    if (task.status === "done") {
+      return res.status(400).json({ message: "Task group chat is unavailable for done tasks" });
     }
     if (!canUserAccessTask(req.user, task)) {
       return res.status(403).json({ message: "Not authorized to message this task group" });
@@ -664,6 +683,9 @@ export async function registerRoutes(
     const task = await storage.getTask(taskId);
     if (!task) {
       return res.status(404).json({ message: "Task not found" });
+    }
+    if (task.status === "done") {
+      return res.status(404).json({ message: "Task group not available for done tasks" });
     }
     if (!canUserAccessTask(req.user, task)) {
       return res.status(403).json({ message: "Not authorized to mark this group as read" });
