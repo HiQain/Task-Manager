@@ -20,6 +20,7 @@ import ListView from "@/pages/ListView";
 import Users from "@/pages/Users";
 import AdminConsole from "@/pages/AdminConsole";
 import Chat from "@/pages/Chat";
+import Notifications from "@/pages/Notifications";
 
 function Router() {
   const { user } = useAuth();
@@ -58,6 +59,12 @@ function Router() {
         </ProtectedRoute>
       </Route>
 
+      <Route path="/notifications">
+        <ProtectedRoute>
+          <Notifications />
+        </ProtectedRoute>
+      </Route>
+
       <Route path="/admin">
         <ProtectedRoute requiredRole="admin">
           <AdminConsole />
@@ -82,6 +89,7 @@ function Layout({ children }: { children: React.ReactNode }) {
       case "/list": return "All Tasks";
       case "/users": return "Team Management";
       case "/chat": return "Team Chat";
+      case "/notifications": return "Notifications";
       default: return "";
     }
   };

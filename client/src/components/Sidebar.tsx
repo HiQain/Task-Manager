@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Kanban, ListTodo, Plus, Users, Shield, MessageSquare } from "lucide-react";
+import { Bell, LayoutDashboard, Kanban, ListTodo, Plus, Users, Shield, MessageSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/use-auth";
 import { useUnreadCounts } from "@/hooks/use-chat";
@@ -7,6 +7,8 @@ import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@shared/routes";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import { useToast } from "@/hooks/use-toast";
+import { useNotificationUnreadCount } from "@/hooks/use-notifications";
 
 export function Sidebar({
   onNewTask,
@@ -19,9 +21,12 @@ export function Sidebar({
 }) {
   const [location] = useLocation();
   const { user } = useAuth();
+  const { toast } = useToast();
   const queryClient = useQueryClient();
   const { data: unreadCounts } = useUnreadCounts();
+  const { data: notificationsUnread } = useNotificationUnreadCount();
   const totalUnread = unreadCounts?.total || 0;
+  const notificationUnreadCount = notificationsUnread?.count || 0;
 
   useEffect(() => {
     if (!user?.id) return;
@@ -38,10 +43,19 @@ export function Sidebar({
       }
 
       const type = parsed?.type;
+      const payload = parsed?.payload;
 
       if (type === "task:changed") {
         queryClient.invalidateQueries({ queryKey: [api.tasks.list.path] });
         queryClient.invalidateQueries({ queryKey: [api.tasks.get.path] });
+      }
+
+      if (type === "notify" && payload?.title) {
+        toast({
+          title: String(payload.title),
+          description: payload?.description ? String(payload.description) : undefined,
+          variant: payload?.variant === "destructive" ? "destructive" : "default",
+        });
       }
 
       queryClient.invalidateQueries({ queryKey: [api.chats.unread.path] });
@@ -49,12 +63,14 @@ export function Sidebar({
       queryClient.invalidateQueries({ queryKey: [api.chats.groups.path] });
       queryClient.invalidateQueries({ queryKey: [api.chats.groupsUnread.path] });
       queryClient.invalidateQueries({ queryKey: ["chat", "task-group"] });
+      queryClient.invalidateQueries({ queryKey: [api.notifications.list.path] });
+      queryClient.invalidateQueries({ queryKey: [api.notifications.unread.path] });
     };
 
     return () => {
       ws.close();
     };
-  }, [user?.id, queryClient]);
+  }, [user?.id, queryClient, toast]);
 
   // All admin items
   const adminNavItems = [
@@ -63,12 +79,14 @@ export function Sidebar({
     { label: "List View", icon: ListTodo, href: "/list" },
     { label: "Team", icon: Users, href: "/users" },
     { label: "Chat", icon: MessageSquare, href: "/chat" },
+    { label: "Notifications", icon: Bell, href: "/notifications" },
   ];
 
   // User only sees tasks for drag & drop
   const userNavItems = [
     { label: "Hiqain Board", icon: Kanban, href: "/board" },
     { label: "Chat", icon: MessageSquare, href: "/chat" },
+    { label: "Notifications", icon: Bell, href: "/notifications" },
   ];
 
   const navItems = user?.role === "admin" ? adminNavItems : userNavItems;
@@ -101,6 +119,11 @@ export function Sidebar({
                 {item.href === "/chat" && totalUnread > 0 && (
                   <span className="ml-auto min-w-5 h-5 px-1 rounded-full bg-destructive text-destructive-foreground text-[10px] font-semibold flex items-center justify-center">
                     {totalUnread > 99 ? "99+" : totalUnread}
+                  </span>
+                )}
+                {item.href === "/notifications" && notificationUnreadCount > 0 && (
+                  <span className="ml-auto min-w-5 h-5 px-1 rounded-full bg-destructive text-destructive-foreground text-[10px] font-semibold flex items-center justify-center">
+                    {notificationUnreadCount > 99 ? "99+" : notificationUnreadCount}
                   </span>
                 )}
               </div>

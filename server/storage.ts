@@ -1,6 +1,7 @@
 import { db } from "./db";
 import {
   messages,
+  notifications,
   taskChatGroups,
   taskGroupReadStates,
   taskGroupMessages,
@@ -11,16 +12,18 @@ import {
   type InsertTaskGroupMessage,
   type InsertTaskChatGroup,
   type InsertTaskGroupReadState,
+  type InsertNotification,
   type Task,
   type TaskGroupMessage,
   type TaskChatGroup,
   type TaskGroupReadState,
+  type Notification,
   type User,
   type InsertTask,
   type InsertUser,
   type UpdateTaskRequest
 } from "@shared/schema";
-import { and, asc, eq, isNull, ne, or } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, ne, or } from "drizzle-orm";
 import crypto from "crypto";
 
 export interface IStorage {
@@ -50,6 +53,12 @@ export interface IStorage {
   createTaskGroupMessage(data: Pick<InsertTaskGroupMessage, "taskId" | "content"> & { fromUserId: number }): Promise<TaskGroupMessage>;
   getTaskGroupReadState(userId: number, taskId: number): Promise<TaskGroupReadState | undefined>;
   upsertTaskGroupReadState(userId: number, taskId: number, lastReadAt?: Date): Promise<void>;
+  createNotification(data: InsertNotification): Promise<Notification>;
+  getNotificationsForUser(userId: number): Promise<Notification[]>;
+  getNotification(id: number): Promise<Notification | undefined>;
+  markNotificationRead(id: number): Promise<void>;
+  markAllNotificationsRead(userId: number): Promise<void>;
+  getNotificationUnreadCount(userId: number): Promise<number>;
   markMessagesAsRead(userId: number, otherUserId: number): Promise<void>;
   getUnreadCountsForUser(userId: number): Promise<{ total: number; byUser: Record<string, number> }>;
 }
@@ -320,6 +329,43 @@ export class DatabaseStorage implements IStorage {
         target: [taskGroupReadStates.userId, taskGroupReadStates.taskId],
         set: { lastReadAt, updatedAt: new Date() },
       });
+  }
+
+  async createNotification(data: InsertNotification): Promise<Notification> {
+    const [notification] = await db.insert(notifications).values(data).returning();
+    return notification;
+  }
+
+  async getNotificationsForUser(userId: number): Promise<Notification[]> {
+    return await db
+      .select()
+      .from(notifications)
+      .where(eq(notifications.userId, userId))
+      .orderBy(desc(notifications.createdAt));
+  }
+
+  async getNotification(id: number): Promise<Notification | undefined> {
+    const [notification] = await db.select().from(notifications).where(eq(notifications.id, id));
+    return notification;
+  }
+
+  async markNotificationRead(id: number): Promise<void> {
+    await db.update(notifications).set({ readAt: new Date() }).where(eq(notifications.id, id));
+  }
+
+  async markAllNotificationsRead(userId: number): Promise<void> {
+    await db
+      .update(notifications)
+      .set({ readAt: new Date() })
+      .where(and(eq(notifications.userId, userId), isNull(notifications.readAt)));
+  }
+
+  async getNotificationUnreadCount(userId: number): Promise<number> {
+    const rows = await db
+      .select()
+      .from(notifications)
+      .where(and(eq(notifications.userId, userId), isNull(notifications.readAt)));
+    return rows.length;
   }
 
   async markMessagesAsRead(userId: number, otherUserId: number): Promise<void> {

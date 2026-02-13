@@ -120,6 +120,41 @@ export async function registerRoutes(
     emitToUser(userId, { type: "unread:update", payload: counts });
   };
 
+  const emitNotification = async (
+    userIds: Iterable<number>,
+    payload: {
+      title: string;
+      description: string;
+      variant?: "default" | "destructive";
+      actorUserId?: number;
+      type?: string;
+      entityType?: string;
+      entityId?: number;
+    }
+  ) => {
+    const uniqueUserIds = new Set<number>(userIds);
+    await Promise.all(
+      Array.from(uniqueUserIds).map(async (userId) => {
+        const notification = await storage.createNotification({
+          userId,
+          actorUserId: payload.actorUserId,
+          type: payload.type || "info",
+          title: payload.title,
+          description: payload.description,
+          entityType: payload.entityType,
+          entityId: payload.entityId,
+        });
+        emitToUser(userId, {
+          type: "notify",
+          payload: {
+            ...payload,
+            id: notification.id,
+          },
+        });
+      })
+    );
+  };
+
   const pushTaskUpdateToRelevantUsers = async (
     action: "created" | "updated" | "deleted",
     task: any
@@ -146,6 +181,13 @@ export async function registerRoutes(
         },
       });
     });
+  };
+
+  const toStatusLabel = (status: string | null | undefined) => {
+    if (!status) return "To Do";
+    if (status === "in_progress") return "In Progress";
+    if (status === "done") return "Done";
+    return "To Do";
   };
 
   const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
@@ -331,6 +373,47 @@ export async function registerRoutes(
     res.status(204).send();
   });
 
+  // Notifications API
+  app.get(api.notifications.list.path, async (req, res) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const notifications = await storage.getNotificationsForUser(req.user.id);
+    res.json(notifications);
+  });
+
+  app.get(api.notifications.unread.path, async (req, res) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const count = await storage.getNotificationUnreadCount(req.user.id);
+    res.json({ count });
+  });
+
+  app.post(api.notifications.markRead.path, async (req, res) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ message: "Invalid notification id" });
+    }
+    const existing = await storage.getNotification(id);
+    if (!existing || existing.userId !== req.user.id) {
+      return res.status(404).json({ message: "Notification not found" });
+    }
+    await storage.markNotificationRead(id);
+    res.json({ success: true });
+  });
+
+  app.post(api.notifications.markAllRead.path, async (req, res) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    await storage.markAllNotificationsRead(req.user.id);
+    res.json({ success: true });
+  });
+
   // Tasks API
   app.get(api.tasks.list.path, async (req, res) => {
     if (!req.user) {
@@ -373,6 +456,17 @@ export async function registerRoutes(
         createdById: req.user.id,
       });
       await pushTaskUpdateToRelevantUsers("created", task);
+      const assignedUserIds = getAssignedUserIds(task).filter((id) => id !== req.user.id);
+      if (assignedUserIds.length > 0) {
+        await emitNotification(assignedUserIds, {
+          title: "New Task Assigned",
+          description: `${req.user.name} assigned "${task.title}" to you.`,
+          actorUserId: req.user.id,
+          type: "task_assigned",
+          entityType: "task",
+          entityId: task.id,
+        });
+      }
       res.status(201).json(task);
     } catch (err) {
       if (err instanceof z.ZodError) {
@@ -414,6 +508,50 @@ export async function registerRoutes(
 
       const updated = await storage.updateTask(id, safeInput);
       await pushTaskUpdateToRelevantUsers("updated", updated);
+
+      const prevAssigned = new Set<number>(getAssignedUserIds(existing));
+      const nextAssigned = new Set<number>(getAssignedUserIds(updated));
+      const addedAssignees = Array.from(nextAssigned).filter((id) => !prevAssigned.has(id) && id !== req.user.id);
+      const removedAssignees = Array.from(prevAssigned).filter((id) => !nextAssigned.has(id) && id !== req.user.id);
+
+      if (addedAssignees.length > 0) {
+        await emitNotification(addedAssignees, {
+          title: "Task Assignment",
+          description: `${req.user.name} assigned "${updated.title}" to you.`,
+          actorUserId: req.user.id,
+          type: "task_assigned",
+          entityType: "task",
+          entityId: updated.id,
+        });
+      }
+
+      if (removedAssignees.length > 0) {
+        await emitNotification(removedAssignees, {
+          title: "Task Unassigned",
+          description: `${req.user.name} removed you from "${updated.title}".`,
+          actorUserId: req.user.id,
+          type: "task_unassigned",
+          entityType: "task",
+          entityId: updated.id,
+        });
+      }
+
+      if (safeInput.status && safeInput.status !== existing.status) {
+        const notifyUserIds = new Set<number>(
+          [existing.createdById, ...getAssignedUserIds(updated)].filter(
+            (id): id is number => typeof id === "number" && Number.isFinite(id)
+          )
+        );
+        notifyUserIds.delete(req.user.id);
+        await emitNotification(notifyUserIds, {
+          title: "Task Status Updated",
+          description: `${req.user.name} moved "${updated.title}" to ${toStatusLabel(updated.status)}.`,
+          actorUserId: req.user.id,
+          type: "task_status",
+          entityType: "task",
+          entityId: updated.id,
+        });
+      }
       res.json(updated);
     } catch (err) {
       if (err instanceof z.ZodError) {

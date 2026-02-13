@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { insertMessageSchema, insertTaskGroupMessageSchema, insertTaskSchema, insertUserSchema, messages, taskChatGroups, taskGroupMessages, tasks, users } from './schema';
+import { insertMessageSchema, insertTaskGroupMessageSchema, insertTaskSchema, insertUserSchema, messages, notifications, taskChatGroups, taskGroupMessages, tasks, users } from './schema';
 
 export const errorSchemas = {
   validation: z.object({
@@ -225,6 +225,41 @@ export const api = {
         400: errorSchemas.validation,
         401: errorSchemas.notFound,
         404: errorSchemas.notFound,
+      },
+    },
+  },
+  notifications: {
+    list: {
+      method: 'GET' as const,
+      path: '/api/notifications',
+      responses: {
+        200: z.array(z.custom<typeof notifications.$inferSelect>()),
+        401: errorSchemas.notFound,
+      },
+    },
+    unread: {
+      method: 'GET' as const,
+      path: '/api/notifications/unread',
+      responses: {
+        200: z.object({ count: z.number() }),
+        401: errorSchemas.notFound,
+      },
+    },
+    markRead: {
+      method: 'POST' as const,
+      path: '/api/notifications/:id/read',
+      responses: {
+        200: z.object({ success: z.boolean() }),
+        401: errorSchemas.notFound,
+        404: errorSchemas.notFound,
+      },
+    },
+    markAllRead: {
+      method: 'POST' as const,
+      path: '/api/notifications/read-all',
+      responses: {
+        200: z.object({ success: z.boolean() }),
+        401: errorSchemas.notFound,
       },
     },
   },

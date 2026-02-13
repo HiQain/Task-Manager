@@ -64,6 +64,19 @@ export const taskGroupReadStates = pgTable(
   })
 );
 
+export const notifications = pgTable("notifications", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id),
+  actorUserId: integer("actor_user_id").references(() => users.id),
+  type: text("type").notNull(),
+  title: text("title").notNull(),
+  description: text("description").notNull(),
+  entityType: text("entity_type"),
+  entityId: integer("entity_id"),
+  readAt: timestamp("read_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 export const insertUserSchema = createInsertSchema(users)
   .omit({ id: true, createdAt: true })
   .extend({
@@ -91,6 +104,8 @@ export const insertTaskChatGroupSchema = createInsertSchema(taskChatGroups)
   .omit({ id: true, createdAt: true });
 export const insertTaskGroupReadStateSchema = createInsertSchema(taskGroupReadStates)
   .omit({ id: true, updatedAt: true });
+export const insertNotificationSchema = createInsertSchema(notifications)
+  .omit({ id: true, createdAt: true, readAt: true });
 
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
@@ -105,3 +120,5 @@ export type TaskChatGroup = typeof taskChatGroups.$inferSelect;
 export type InsertTaskChatGroup = z.infer<typeof insertTaskChatGroupSchema>;
 export type TaskGroupReadState = typeof taskGroupReadStates.$inferSelect;
 export type InsertTaskGroupReadState = z.infer<typeof insertTaskGroupReadStateSchema>;
+export type Notification = typeof notifications.$inferSelect;
+export type InsertNotification = z.infer<typeof insertNotificationSchema>;
