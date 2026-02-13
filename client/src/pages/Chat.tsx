@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -38,6 +38,7 @@ export default function Chat() {
   const audioContextRef = useRef<AudioContext | null>(null);
   const ringtoneIntervalRef = useRef<number | null>(null);
   const callTimeoutRef = useRef<number | null>(null);
+  const activeUserIdRef = useRef<number | undefined>(undefined);
 
   const teamMembers = useMemo(
     () => (users || []).filter((u) => u.id !== user?.id),
@@ -147,10 +148,25 @@ export default function Chat() {
     }
   };
 
+  const sendActiveRoom = useCallback((targetUserId?: number) => {
+    const socket = wsRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    socket.send(
+      JSON.stringify({
+        type: "chat:active-room",
+        payload: { activeUserId: targetUserId ?? null },
+      }),
+    );
+  }, []);
+
   const messageCount = Array.isArray(messages) ? messages.length : 0;
 
   useEffect(() => {
     setAutoScrollEnabled(true);
+  }, [activeUserId]);
+
+  useEffect(() => {
+    activeUserIdRef.current = activeUserId;
   }, [activeUserId]);
 
   useEffect(() => {
@@ -213,11 +229,19 @@ export default function Chat() {
       }
     };
 
+    ws.onopen = () => {
+      sendActiveRoom(activeUserIdRef.current);
+    };
+
     return () => {
       ws.close();
       wsRef.current = null;
     };
-  }, [user?.id, toast]);
+  }, [user?.id, toast, sendActiveRoom]);
+
+  useEffect(() => {
+    sendActiveRoom(activeUserId);
+  }, [activeUserId, sendActiveRoom]);
 
   useEffect(() => {
     if (!autoScrollEnabled) return;

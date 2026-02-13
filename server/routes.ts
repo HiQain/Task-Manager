@@ -35,6 +35,34 @@ export async function registerRoutes(
   app: Express
 ): Promise<Server> {
   const wsClientsByUserId = new Map<number, Set<WebSocket>>();
+  const activeChatPairsByUserId = new Map<number, Map<number, number>>();
+
+  const addActiveChatPair = (userId: number, otherUserId: number) => {
+    if (!activeChatPairsByUserId.has(userId)) {
+      activeChatPairsByUserId.set(userId, new Map<number, number>());
+    }
+    const pairs = activeChatPairsByUserId.get(userId)!;
+    pairs.set(otherUserId, (pairs.get(otherUserId) || 0) + 1);
+  };
+
+  const removeActiveChatPair = (userId: number, otherUserId: number) => {
+    const pairs = activeChatPairsByUserId.get(userId);
+    if (!pairs) return;
+    const current = pairs.get(otherUserId) || 0;
+    if (current <= 1) {
+      pairs.delete(otherUserId);
+    } else {
+      pairs.set(otherUserId, current - 1);
+    }
+    if (pairs.size === 0) {
+      activeChatPairsByUserId.delete(userId);
+    }
+  };
+
+  const isUserViewingChatWith = (userId: number, otherUserId: number) => {
+    const pairs = activeChatPairsByUserId.get(userId);
+    return !!pairs && (pairs.get(otherUserId) || 0) > 0;
+  };
 
   const emitToUser = (userId: number, payload: Record<string, unknown>) => {
     const clients = wsClientsByUserId.get(userId);
@@ -56,6 +84,7 @@ export async function registerRoutes(
   wss.on("connection", async (socket, req) => {
     const url = new URL(req.url || "", "http://localhost");
     const userId = Number(url.searchParams.get("userId"));
+    let activeRoomUserId: number | null = null;
     if (!Number.isFinite(userId)) {
       socket.close();
       return;
@@ -91,6 +120,27 @@ export async function registerRoutes(
               signal: payload?.signal,
             },
           });
+          return;
+        }
+
+        if (type === "chat:active-room") {
+          const rawActiveUserId = payload?.activeUserId;
+          const nextActiveUserId = rawActiveUserId == null ? null : Number(rawActiveUserId);
+          if (nextActiveUserId !== null && (!Number.isFinite(nextActiveUserId) || nextActiveUserId === userId)) {
+            return;
+          }
+
+          if (activeRoomUserId !== null) {
+            removeActiveChatPair(userId, activeRoomUserId);
+          }
+          activeRoomUserId = nextActiveUserId;
+          if (activeRoomUserId !== null) {
+            addActiveChatPair(userId, activeRoomUserId);
+            void storage
+              .markMessagesAsRead(userId, activeRoomUserId)
+              .then(() => pushUnreadUpdate(userId))
+              .catch(() => {});
+          }
         }
       } catch {
         // ignore invalid socket payload
@@ -98,6 +148,9 @@ export async function registerRoutes(
     });
 
     socket.on("close", () => {
+      if (activeRoomUserId !== null) {
+        removeActiveChatPair(userId, activeRoomUserId);
+      }
       const clients = wsClientsByUserId.get(userId);
       if (!clients) return;
       clients.delete(socket);
@@ -355,9 +408,11 @@ export async function registerRoutes(
       if (!recipient) {
         return res.status(404).json({ message: "User not found" });
       }
+      const shouldMarkReadImmediately = isUserViewingChatWith(input.toUserId, req.user.id);
       const message = await storage.createMessage({
         ...input,
         fromUserId: req.user.id,
+        readAt: shouldMarkReadImmediately ? new Date() : null,
       });
       emitToUser(input.toUserId, {
         type: "message:new",
