@@ -22,7 +22,9 @@ export function useAuth(): AuthContextType {
         queryKey: ['auth', 'me'],
         queryFn: async () => {
             try {
-                const res = await fetch(api.auth.me.path);
+                const res = await fetch(api.auth.me.path, {
+                    credentials: 'include',
+                });
                 if (!res.ok) {
                     if (res.status === 401) {
                         return null;

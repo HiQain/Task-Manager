@@ -61,6 +61,10 @@ function canUserAccessTask(user: any, task: any): boolean {
   return getAssignedUserIds(task).includes(user.id);
 }
 
+function isAdminUser(user: any): boolean {
+  return String(user?.role || "").toLowerCase() === "admin";
+}
+
 function getTaskParticipantIds(task: any): number[] {
   const ids = new Set<number>();
   if (typeof task?.createdById === "number" && Number.isFinite(task.createdById)) {
@@ -74,6 +78,16 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  const isProduction = process.env.NODE_ENV === "production";
+  const sessionCookieSameSiteRaw = (process.env.SESSION_COOKIE_SAME_SITE || "lax").toLowerCase();
+  const sessionCookieSameSite: "lax" | "strict" | "none" =
+    sessionCookieSameSiteRaw === "strict" || sessionCookieSameSiteRaw === "none"
+      ? (sessionCookieSameSiteRaw as "strict" | "none")
+      : "lax";
+  const sessionCookieSecure =
+    (process.env.SESSION_COOKIE_SECURE || "").toLowerCase() === "true" ||
+    (isProduction && sessionCookieSameSite === "none");
+
   const wsClientsByUserId = new Map<number, Set<WebSocket>>();
   const activeChatPairsByUserId = new Map<number, Map<number, number>>();
 
@@ -168,7 +182,7 @@ export async function registerRoutes(
 
     const allUsers = await storage.getUsers();
     allUsers
-      .filter((u) => u.role === "admin")
+      .filter((u) => isAdminUser(u))
       .forEach((admin) => recipientIds.add(admin.id));
 
     recipientIds.forEach((userId) => {
@@ -276,9 +290,11 @@ export async function registerRoutes(
       secret: process.env.SESSION_SECRET || "your-secret-key",
       resave: false,
       saveUninitialized: false,
+      proxy: isProduction,
       cookie: {
         httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
+        secure: sessionCookieSecure,
+        sameSite: sessionCookieSameSite,
         maxAge: 1000 * 60 * 60 * 24 * 7, // 7 days
       },
     })
@@ -348,7 +364,7 @@ export async function registerRoutes(
 
   app.post(api.users.create.path, async (req, res) => {
     // Only admins can create users
-    if (!req.user || req.user.role !== 'admin') {
+    if (!req.user || !isAdminUser(req.user)) {
       return res.status(403).json({ message: 'Only admins can create users' });
     }
 
@@ -421,7 +437,7 @@ export async function registerRoutes(
     }
 
     const tasks = await storage.getTasks();
-    if (req.user.role === "admin") {
+    if (isAdminUser(req.user)) {
       return res.json(tasks);
     }
 
@@ -438,7 +454,7 @@ export async function registerRoutes(
     if (!task) {
       return res.status(404).json({ message: 'Task not found' });
     }
-    if (req.user.role !== "admin" && !canUserAccessTask(req.user, task)) {
+    if (!isAdminUser(req.user) && !canUserAccessTask(req.user, task)) {
       return res.status(403).json({ message: "Not authorized to view this task" });
     }
     res.json(task);
@@ -492,7 +508,7 @@ export async function registerRoutes(
       if (!existing) {
         return res.status(404).json({ message: 'Task not found' });
       }
-      const isAdmin = req.user.role === "admin";
+      const isAdmin = isAdminUser(req.user);
       const isCreator = existing.createdById === req.user.id;
       const isParticipant = canUserAccessTask(req.user, existing);
       const updateKeys = Object.keys(input || {});

@@ -125,7 +125,7 @@ export function TaskCard({ task, index, canEdit, canMove, onEdit, onDelete, onVi
 
                   {canEdit && (
                     <DropdownMenu>
-                    <DropdownMenuTrigger
+                      <DropdownMenuTrigger
                         className="opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity focus:opacity-100 outline-none"
                         onClick={(e) => e.stopPropagation()}
                       >
