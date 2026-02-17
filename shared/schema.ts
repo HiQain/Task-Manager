@@ -118,14 +118,14 @@ export const insertTaskSchema = z.object({
 export const insertMessageSchema = z.object({
   fromUserId: z.number().int().optional(),
   toUserId: z.number().int(),
-  content: z.string().min(1, "Message is required").max(1000, "Message is too long"),
+  content: z.string().min(1, "Message is required").max(60000, "Message is too long"),
   readAt: z.date().nullable().optional(),
 });
 
 export const insertTaskGroupMessageSchema = z.object({
   taskId: z.number().int(),
   fromUserId: z.number().int().optional(),
-  content: z.string().min(1, "Message is required").max(1000, "Message is too long"),
+  content: z.string().min(1, "Message is required").max(60000, "Message is too long"),
 });
 
 export const insertTaskChatGroupSchema = z.object({

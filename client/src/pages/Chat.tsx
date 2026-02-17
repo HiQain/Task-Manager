@@ -2,13 +2,121 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ChevronLeft, Loader2, Mic, MicOff, Phone, PhoneOff, Search, Send } from "lucide-react";
+import { ChevronLeft, Download, Loader2, Mic, MicOff, Paperclip, Phone, PhoneOff, Search, Send, X } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useMarkChatRead, useMarkTaskGroupRead, useMessages, useSendMessage, useSendTaskGroupMessage, useTaskGroupMessages, useTaskGroupUnreadCounts, useTaskGroups, useUnreadCounts } from "@/hooks/use-chat";
 import { useUsers } from "@/hooks/use-users";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
 import { useTasks } from "@/hooks/use-tasks";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+
+type ChatAttachment = {
+  name: string;
+  data: string;
+  type: string;
+  size: number;
+};
+
+type PreviewAttachment = Pick<ChatAttachment, "name" | "data" | "type">;
+
+const CHAT_ATTACHMENT_PREFIX = "__CHAT_ATTACHMENTS_V1__:";
+const MAX_CHAT_ATTACHMENTS = 2;
+const MAX_CHAT_ATTACHMENT_BYTES = 20 * 1024;
+const MAX_CHAT_MESSAGE_CHARS = 58000;
+
+function decodeMessagePayload(rawContent: unknown): { text: string; attachments: ChatAttachment[] } {
+  const content = typeof rawContent === "string" ? rawContent : "";
+  if (!content.startsWith(CHAT_ATTACHMENT_PREFIX)) {
+    return { text: content, attachments: [] };
+  }
+
+  const encoded = content.slice(CHAT_ATTACHMENT_PREFIX.length);
+  try {
+    const parsed = JSON.parse(encoded) as { text?: unknown; attachments?: unknown };
+    const text = typeof parsed?.text === "string" ? parsed.text : "";
+    const attachments = Array.isArray(parsed?.attachments)
+      ? parsed.attachments
+          .filter((item): item is ChatAttachment => {
+            return !!item && typeof item === "object"
+              && typeof (item as any).name === "string"
+              && typeof (item as any).data === "string"
+              && typeof (item as any).type === "string"
+              && typeof (item as any).size === "number";
+          })
+      : [];
+    return { text, attachments };
+  } catch {
+    return { text: content, attachments: [] };
+  }
+}
+
+function encodeMessagePayload(text: string, attachments: ChatAttachment[]): string {
+  if (attachments.length === 0) return text;
+  return `${CHAT_ATTACHMENT_PREFIX}${JSON.stringify({ text, attachments })}`;
+}
+
+function estimateDataUrlBytes(dataUrl: string): number {
+  const base64 = dataUrl.split(",")[1] || "";
+  const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor((base64.length * 3) / 4) - padding);
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error(`Failed to read ${file.name}`));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function compressImageToLimit(file: File, maxBytes: number): Promise<{ dataUrl: string; bytes: number } | null> {
+  const sourceDataUrl = await readFileAsDataUrl(file);
+  let sourceBytes = estimateDataUrlBytes(sourceDataUrl);
+  if (sourceBytes <= maxBytes) {
+    return { dataUrl: sourceDataUrl, bytes: sourceBytes };
+  }
+
+  const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("Failed to load image"));
+    img.src = sourceDataUrl;
+  });
+
+  let width = image.width;
+  let height = image.height;
+  const maxDimension = 1400;
+  if (width > maxDimension || height > maxDimension) {
+    const ratio = Math.min(maxDimension / width, maxDimension / height);
+    width = Math.max(1, Math.floor(width * ratio));
+    height = Math.max(1, Math.floor(height * ratio));
+  }
+
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+
+  for (let attempt = 0; attempt < 8; attempt++) {
+    canvas.width = width;
+    canvas.height = height;
+    ctx.clearRect(0, 0, width, height);
+    ctx.drawImage(image, 0, 0, width, height);
+
+    const quality = Math.max(0.4, 0.88 - attempt * 0.08);
+    const compressed = canvas.toDataURL("image/jpeg", quality);
+    sourceBytes = estimateDataUrlBytes(compressed);
+    if (sourceBytes <= maxBytes) {
+      return { dataUrl: compressed, bytes: sourceBytes };
+    }
+
+    width = Math.max(1, Math.floor(width * 0.86));
+    height = Math.max(1, Math.floor(height * 0.86));
+  }
+
+  return null;
+}
 
 function getTaskMemberIds(task: any): number[] {
   const rawAssignedToIds = task?.assignedToIds;
@@ -53,9 +161,12 @@ export default function Chat() {
   const [activeUserId, setActiveUserId] = useState<number | undefined>(undefined);
   const [activeTaskGroupId, setActiveTaskGroupId] = useState<number | undefined>(undefined);
   const [draft, setDraft] = useState("");
+  const [draftAttachments, setDraftAttachments] = useState<ChatAttachment[]>([]);
+  const [previewAttachment, setPreviewAttachment] = useState<PreviewAttachment | null>(null);
   const [search, setSearch] = useState("");
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
+  const attachmentInputRef = useRef<HTMLInputElement | null>(null);
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
   const wsRef = useRef<WebSocket | null>(null);
   const peerRef = useRef<RTCPeerConnection | null>(null);
@@ -674,16 +785,26 @@ export default function Chat() {
 
   const handleSend = async () => {
     const content = draft.trim();
-    if (!content) return;
+    if (!content && draftAttachments.length === 0) return;
     try {
+      const encodedContent = encodeMessagePayload(content, draftAttachments);
+      if (encodedContent.length > MAX_CHAT_MESSAGE_CHARS) {
+        toast({
+          title: "Message too large",
+          description: "Reduce attachment size/count and try again.",
+          variant: "destructive",
+        });
+        return;
+      }
       if (isGroupMode && activeTaskGroupId) {
-        await sendTaskGroupMessage.mutateAsync({ content });
+        await sendTaskGroupMessage.mutateAsync({ content: encodedContent });
       } else if (activeUserId) {
-        await sendMessage.mutateAsync({ toUserId: activeUserId, content });
+        await sendMessage.mutateAsync({ toUserId: activeUserId, content: encodedContent });
       } else {
         return;
       }
       setDraft("");
+      setDraftAttachments([]);
       stopTyping(activeUserId);
     } catch (error) {
       toast({
@@ -735,6 +856,79 @@ export default function Chat() {
     typingStopTimeoutRef.current = window.setTimeout(() => {
       stopTyping(activeUserId);
     }, 1500);
+  };
+
+  const handleAttachmentSelect = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const existingCount = draftAttachments.length;
+    const allowedSlots = Math.max(0, MAX_CHAT_ATTACHMENTS - existingCount);
+    if (allowedSlots === 0) {
+      toast({
+        title: "Attachment limit reached",
+        description: `You can attach up to ${MAX_CHAT_ATTACHMENTS} files in one message.`,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const selected = Array.from(files).slice(0, allowedSlots);
+
+    try {
+      const nextItems: ChatAttachment[] = [];
+      for (const file of selected) {
+        if (file.type.startsWith("image/")) {
+          const compressed = await compressImageToLimit(file, MAX_CHAT_ATTACHMENT_BYTES);
+          if (!compressed) {
+            toast({
+              title: "Image too large",
+              description: `${file.name} could not be compressed under ${Math.floor(MAX_CHAT_ATTACHMENT_BYTES / 1024)}KB.`,
+              variant: "destructive",
+            });
+            continue;
+          }
+          nextItems.push({
+            name: file.name,
+            data: compressed.dataUrl,
+            type: "image/jpeg",
+            size: compressed.bytes,
+          });
+          continue;
+        }
+
+        if (file.size > MAX_CHAT_ATTACHMENT_BYTES) {
+          toast({
+            title: "File too large",
+            description: `${file.name} exceeds ${Math.floor(MAX_CHAT_ATTACHMENT_BYTES / 1024)}KB limit.`,
+            variant: "destructive",
+          });
+          continue;
+        }
+
+        const dataUrl = await readFileAsDataUrl(file);
+        nextItems.push({
+          name: file.name,
+          data: dataUrl,
+          type: file.type || "application/octet-stream",
+          size: file.size,
+        });
+      }
+      if (nextItems.length === 0) return;
+      setDraftAttachments((prev) => [...prev, ...nextItems]);
+    } catch {
+      toast({
+        title: "Attachment error",
+        description: "Unable to read selected file(s).",
+        variant: "destructive",
+      });
+    } finally {
+      if (attachmentInputRef.current) {
+        attachmentInputRef.current.value = "";
+      }
+    }
+  };
+
+  const removeDraftAttachment = (index: number) => {
+    setDraftAttachments((prev) => prev.filter((_, i) => i !== index));
   };
 
   const activePresence = activeUserId ? presenceByUserId[activeUserId] : undefined;
@@ -960,6 +1154,7 @@ export default function Chat() {
             displayedMessages.map((msg) => {
               const mine = msg.fromUserId === user?.id;
               const sender = (users || []).find((u) => u.id === msg.fromUserId);
+              const parsedMessage = decodeMessagePayload(msg.content);
               return (
                 <div key={msg.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
                   <div
@@ -973,7 +1168,44 @@ export default function Chat() {
                         {sender?.name || "Unknown"}
                       </p>
                     )}
-                    <p className="text-sm whitespace-pre-wrap break-words">{msg.content}</p>
+                    {parsedMessage.text && (
+                      <p className="text-sm whitespace-pre-wrap break-words">{parsedMessage.text}</p>
+                    )}
+                    {parsedMessage.attachments.length > 0 && (
+                      <div className="mt-2 space-y-2">
+                        {parsedMessage.attachments.map((attachment, index) => (
+                          <div key={`${msg.id}-attachment-${index}`} className="rounded-md border border-border/60 bg-background/60 p-2">
+                            {attachment.type.startsWith("image/") ? (
+                              <button
+                                type="button"
+                                className="block"
+                                onClick={() =>
+                                  setPreviewAttachment({
+                                    name: attachment.name,
+                                    data: attachment.data,
+                                    type: attachment.type,
+                                  })
+                                }
+                              >
+                                <img
+                                  src={attachment.data}
+                                  alt={attachment.name}
+                                  className="max-h-40 w-auto rounded border border-border/60"
+                                />
+                              </button>
+                            ) : (
+                              <a
+                                href={attachment.data}
+                                download={attachment.name}
+                                className="text-xs underline break-all"
+                              >
+                                {attachment.name}
+                              </a>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     <p className={`text-[10px] mt-1 ${mine ? "text-primary-foreground/80" : "text-muted-foreground"}`}>
                       {msg.createdAt ? new Date(msg.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
                     </p>
@@ -1002,6 +1234,34 @@ export default function Chat() {
 
         <div className="p-4 border-t border-border/60 bg-muted/10">
           <audio ref={remoteAudioRef} autoPlay />
+          <input
+            ref={attachmentInputRef}
+            type="file"
+            accept="image/*,application/*,text/*"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              void handleAttachmentSelect(e.target.files);
+            }}
+          />
+          {draftAttachments.length > 0 && (
+            <div className="mb-3 flex flex-wrap gap-2">
+              {draftAttachments.map((attachment, index) => (
+                <div key={`draft-attachment-${index}`} className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-2 py-1 text-xs max-w-[220px]">
+                  <a href={attachment.data} download={attachment.name} className="truncate underline">
+                    {attachment.name}
+                  </a>
+                  <button
+                    type="button"
+                    className="shrink-0 text-muted-foreground hover:text-destructive"
+                    onClick={() => removeDraftAttachment(index)}
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
           <form
             className="flex gap-2"
             onSubmit={async (e) => {
@@ -1009,6 +1269,15 @@ export default function Chat() {
               await handleSend();
             }}
           >
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 px-3"
+              disabled={!showConversationPanel || sendPending}
+              onClick={() => attachmentInputRef.current?.click()}
+            >
+              <Paperclip className="w-4 h-4" />
+            </Button>
             <Input
               value={draft}
               onChange={(e) => handleDraftChange(e.target.value)}
@@ -1018,7 +1287,7 @@ export default function Chat() {
             />
             <Button
               type="submit"
-              disabled={!showConversationPanel || !draft.trim() || sendPending}
+              disabled={!showConversationPanel || (!draft.trim() && draftAttachments.length === 0) || sendPending}
               className="h-11 px-4"
             >
               {sendPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
@@ -1026,6 +1295,37 @@ export default function Chat() {
           </form>
         </div>
       </section>
+
+      <Dialog open={!!previewAttachment} onOpenChange={(open) => (!open ? setPreviewAttachment(null) : undefined)}>
+        <DialogContent className="w-[calc(100vw-2rem)] sm:w-full sm:max-w-[760px] max-h-[88vh] overflow-y-auto fixed !top-1/2 !left-1/2 !-translate-x-1/2 !-translate-y-1/2">
+          <DialogHeader>
+            <DialogTitle className="truncate pr-8">{previewAttachment?.name || "Attachment"}</DialogTitle>
+          </DialogHeader>
+          {previewAttachment && (
+            <div className="space-y-4">
+              {previewAttachment.type.startsWith("image/") ? (
+                <div className="rounded-md border border-border/60 bg-muted/20 p-2">
+                  <img
+                    src={previewAttachment.data}
+                    alt={previewAttachment.name}
+                    className="max-h-[65vh] w-full object-contain rounded"
+                  />
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">Preview not available for this file type.</p>
+              )}
+              <div className="flex justify-end">
+                <Button asChild>
+                  <a href={previewAttachment.data} download={previewAttachment.name}>
+                    <Download className="w-4 h-4 mr-2" />
+                    Download
+                  </a>
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
