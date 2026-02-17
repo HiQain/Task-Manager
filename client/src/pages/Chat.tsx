@@ -294,9 +294,9 @@ export default function Chat() {
   }, [sendTypingState]);
 
   const formatLastSeen = useCallback((lastSeenAt: string | null | undefined) => {
-    if (!lastSeenAt) return "Select User";
+    if (!lastSeenAt) return "Offline";
     const date = new Date(lastSeenAt);
-    if (Number.isNaN(date.getTime())) return "Select User";
+    if (Number.isNaN(date.getTime())) return "Offline";
     const diffMs = Date.now() - date.getTime();
     const diffSec = Math.max(1, Math.floor(diffMs / 1000));
     if (diffSec < 60) return "Last seen just now";
@@ -870,9 +870,13 @@ export default function Chat() {
                 {isGroupMode ? (activeTask?.title ? `Task Group: ${activeTask.title}` : "Task Group") : (activeUser?.name || "Select user")}
               </h3>
               <p className="text-xs text-muted-foreground">
-                {isGroupMode
-                  ? `Participants: ${activeTaskParticipants.map((p) => p.name).join(", ")}`
-                  : activeUserSubtitle}
+                {
+                  isGroupMode
+                    ? `Participants: ${activeTaskParticipants.map((p) => p.name).join(", ")}`
+                    : activeUser?.name
+                      ? activeUserSubtitle
+                      : "Select User"
+                }
               </p>
               </div>
             </div>
