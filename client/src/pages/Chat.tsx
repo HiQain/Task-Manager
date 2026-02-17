@@ -70,12 +70,18 @@ export default function Chat() {
   const [isCalling, setIsCalling] = useState(false);
   const [isInCall, setIsInCall] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
+  const [presenceByUserId, setPresenceByUserId] = useState<Record<number, { isOnline: boolean; lastSeenAt: string | null }>>({});
+  const [typingByUserId, setTypingByUserId] = useState<Record<number, boolean>>({});
   const isCallingRef = useRef(false);
   const isInCallRef = useRef(false);
   const audioContextRef = useRef<AudioContext | null>(null);
   const ringtoneIntervalRef = useRef<number | null>(null);
   const callTimeoutRef = useRef<number | null>(null);
   const activeUserIdRef = useRef<number | undefined>(undefined);
+  const typingClearTimeoutsRef = useRef<Map<number, number>>(new Map());
+  const typingStopTimeoutRef = useRef<number | null>(null);
+  const typingTargetUserIdRef = useRef<number | undefined>(undefined);
+  const sentTypingRef = useRef(false);
 
   const teamMembers = useMemo(
     () => (users || []).filter((u) => u.id !== user?.id),
@@ -252,6 +258,55 @@ export default function Chat() {
     );
   }, []);
 
+  const sendActiveTaskGroup = useCallback((targetTaskId?: number) => {
+    const socket = wsRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    socket.send(
+      JSON.stringify({
+        type: "chat:active-task-group",
+        payload: { activeTaskId: targetTaskId ?? null },
+      }),
+    );
+  }, []);
+
+  const sendTypingState = useCallback((targetUserId: number, isTyping: boolean) => {
+    const socket = wsRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    socket.send(
+      JSON.stringify({
+        type: "chat:typing",
+        payload: { toUserId: targetUserId, isTyping },
+      }),
+    );
+  }, []);
+
+  const stopTyping = useCallback((targetUserId?: number) => {
+    const toUserId = targetUserId ?? typingTargetUserIdRef.current;
+    if (toUserId && sentTypingRef.current) {
+      sendTypingState(toUserId, false);
+    }
+    sentTypingRef.current = false;
+    typingTargetUserIdRef.current = undefined;
+    if (typingStopTimeoutRef.current) {
+      window.clearTimeout(typingStopTimeoutRef.current);
+      typingStopTimeoutRef.current = null;
+    }
+  }, [sendTypingState]);
+
+  const formatLastSeen = useCallback((lastSeenAt: string | null | undefined) => {
+    if (!lastSeenAt) return "Select User";
+    const date = new Date(lastSeenAt);
+    if (Number.isNaN(date.getTime())) return "Select User";
+    const diffMs = Date.now() - date.getTime();
+    const diffSec = Math.max(1, Math.floor(diffMs / 1000));
+    if (diffSec < 60) return "Last seen just now";
+    const diffMin = Math.floor(diffSec / 60);
+    if (diffMin < 60) return `Last seen ${diffMin}m ago`;
+    const diffHr = Math.floor(diffMin / 60);
+    if (diffHr < 24) return `Last seen ${diffHr}h ago`;
+    return `Last seen ${date.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}`;
+  }, []);
+
   const messageCount = activeTaskGroupId
     ? (Array.isArray(taskGroupMessages) ? taskGroupMessages.length : 0)
     : (Array.isArray(messages) ? messages.length : 0);
@@ -285,6 +340,53 @@ export default function Chat() {
     ws.onmessage = async (event) => {
       try {
         const parsed = JSON.parse(String(event.data || "{}"));
+        if (parsed?.type === "chat:presence-snapshot" && Array.isArray(parsed?.payload)) {
+          const next: Record<number, { isOnline: boolean; lastSeenAt: string | null }> = {};
+          parsed.payload.forEach((entry: any) => {
+            const presenceUserId = Number(entry?.userId);
+            if (!Number.isFinite(presenceUserId)) return;
+            next[presenceUserId] = {
+              isOnline: !!entry?.isOnline,
+              lastSeenAt: entry?.lastSeenAt ? String(entry.lastSeenAt) : null,
+            };
+          });
+          setPresenceByUserId(next);
+          return;
+        }
+
+        if (parsed?.type === "chat:presence") {
+          const presenceUserId = Number(parsed?.payload?.userId);
+          if (!Number.isFinite(presenceUserId)) return;
+          setPresenceByUserId((prev) => ({
+            ...prev,
+            [presenceUserId]: {
+              isOnline: !!parsed?.payload?.isOnline,
+              lastSeenAt: parsed?.payload?.lastSeenAt ? String(parsed.payload.lastSeenAt) : null,
+            },
+          }));
+          return;
+        }
+
+        if (parsed?.type === "chat:typing") {
+          const fromUserId = Number(parsed?.payload?.fromUserId);
+          if (!Number.isFinite(fromUserId)) return;
+          const isTyping = !!parsed?.payload?.isTyping;
+          setTypingByUserId((prev) => ({ ...prev, [fromUserId]: isTyping }));
+          const existing = typingClearTimeoutsRef.current.get(fromUserId);
+          if (existing) {
+            window.clearTimeout(existing);
+            typingClearTimeoutsRef.current.delete(fromUserId);
+          }
+          if (isTyping) {
+            const timeoutId = window.setTimeout(() => {
+              setTypingByUserId((prev) => ({ ...prev, [fromUserId]: false }));
+              typingClearTimeoutsRef.current.delete(fromUserId);
+            }, 3500);
+            typingClearTimeoutsRef.current.set(fromUserId, timeoutId);
+          }
+          return;
+        }
+
         if (parsed?.type !== "webrtc:signal") return;
         const fromUserId = Number(parsed?.payload?.fromUserId);
         const signal = parsed?.payload?.signal || {};
@@ -338,17 +440,36 @@ export default function Chat() {
 
     ws.onopen = () => {
       sendActiveRoom(activeUserIdRef.current);
+      sendActiveTaskGroup(activeTaskGroupId);
     };
 
     return () => {
+      stopTyping();
+      typingClearTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
+      typingClearTimeoutsRef.current.clear();
       ws.close();
       wsRef.current = null;
     };
-  }, [user?.id, toast, sendActiveRoom]);
+  }, [user?.id, toast, sendActiveRoom, sendActiveTaskGroup, activeTaskGroupId, stopTyping]);
 
   useEffect(() => {
     sendActiveRoom(activeUserId);
   }, [activeUserId, sendActiveRoom]);
+
+  useEffect(() => {
+    sendActiveTaskGroup(activeTaskGroupId);
+  }, [activeTaskGroupId, sendActiveTaskGroup]);
+
+  useEffect(() => {
+    if (!activeUserId || activeTaskGroupId) {
+      stopTyping();
+      return;
+    }
+    typingTargetUserIdRef.current = activeUserId;
+    return () => {
+      stopTyping(activeUserId);
+    };
+  }, [activeUserId, activeTaskGroupId, stopTyping]);
 
   useEffect(() => {
     if (!autoScrollEnabled) return;
@@ -563,6 +684,7 @@ export default function Chat() {
         return;
       }
       setDraft("");
+      stopTyping(activeUserId);
     } catch (error) {
       toast({
         title: "Message send failed",
@@ -584,10 +706,42 @@ export default function Chat() {
   };
 
   const clearActiveConversation = () => {
+    stopTyping(activeUserId);
     setActiveUserId(undefined);
     setActiveTaskGroupId(undefined);
     setLocation("/chat");
   };
+
+  const handleDraftChange = (value: string) => {
+    setDraft(value);
+    if (!activeUserId || isGroupMode) return;
+    const trimmed = value.trim();
+    const previousTargetUserId = typingTargetUserIdRef.current;
+
+    if (!trimmed) {
+      stopTyping(activeUserId);
+      return;
+    }
+
+    typingTargetUserIdRef.current = activeUserId;
+    if (!sentTypingRef.current || previousTargetUserId !== activeUserId) {
+      sendTypingState(activeUserId, true);
+      sentTypingRef.current = true;
+    }
+
+    if (typingStopTimeoutRef.current) {
+      window.clearTimeout(typingStopTimeoutRef.current);
+    }
+    typingStopTimeoutRef.current = window.setTimeout(() => {
+      stopTyping(activeUserId);
+    }, 1500);
+  };
+
+  const activePresence = activeUserId ? presenceByUserId[activeUserId] : undefined;
+  const isActiveUserTyping = activeUserId ? !!typingByUserId[activeUserId] : false;
+  const activeUserSubtitle = isActiveUserTyping
+    ? "typing..."
+    : (activePresence?.isOnline ? "Online" : formatLastSeen(activePresence?.lastSeenAt));
 
   if (isUsersLoading) {
     return (
@@ -718,7 +872,7 @@ export default function Chat() {
               <p className="text-xs text-muted-foreground">
                 {isGroupMode
                   ? `Participants: ${activeTaskParticipants.map((p) => p.name).join(", ")}`
-                  : `Logged in as ${user?.name}`}
+                  : activeUserSubtitle}
               </p>
               </div>
             </div>
@@ -853,7 +1007,7 @@ export default function Chat() {
           >
             <Input
               value={draft}
-              onChange={(e) => setDraft(e.target.value)}
+              onChange={(e) => handleDraftChange(e.target.value)}
               placeholder={showConversationPanel ? "Type a message..." : "Select user or task group first"}
               disabled={!showConversationPanel || sendPending}
               className="h-11"

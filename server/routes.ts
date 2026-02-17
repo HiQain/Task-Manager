@@ -90,6 +90,8 @@ export async function registerRoutes(
 
   const wsClientsByUserId = new Map<number, Set<WebSocket>>();
   const activeChatPairsByUserId = new Map<number, Map<number, number>>();
+  const activeTaskGroupsByUserId = new Map<number, Map<number, number>>();
+  const userPresenceByUserId = new Map<number, { isOnline: boolean; lastSeenAt: string | null }>();
 
   const addActiveChatPair = (userId: number, otherUserId: number) => {
     if (!activeChatPairsByUserId.has(userId)) {
@@ -118,6 +120,33 @@ export async function registerRoutes(
     return !!pairs && (pairs.get(otherUserId) || 0) > 0;
   };
 
+  const addActiveTaskGroup = (userId: number, taskId: number) => {
+    if (!activeTaskGroupsByUserId.has(userId)) {
+      activeTaskGroupsByUserId.set(userId, new Map<number, number>());
+    }
+    const groups = activeTaskGroupsByUserId.get(userId)!;
+    groups.set(taskId, (groups.get(taskId) || 0) + 1);
+  };
+
+  const removeActiveTaskGroup = (userId: number, taskId: number) => {
+    const groups = activeTaskGroupsByUserId.get(userId);
+    if (!groups) return;
+    const current = groups.get(taskId) || 0;
+    if (current <= 1) {
+      groups.delete(taskId);
+    } else {
+      groups.set(taskId, current - 1);
+    }
+    if (groups.size === 0) {
+      activeTaskGroupsByUserId.delete(userId);
+    }
+  };
+
+  const isUserViewingTaskGroup = (userId: number, taskId: number) => {
+    const groups = activeTaskGroupsByUserId.get(userId);
+    return !!groups && (groups.get(taskId) || 0) > 0;
+  };
+
   const emitToUser = (userId: number, payload: Record<string, unknown>) => {
     const clients = wsClientsByUserId.get(userId);
     if (!clients || clients.size === 0) return;
@@ -126,6 +155,12 @@ export async function registerRoutes(
       if (client.readyState === WebSocket.OPEN) {
         client.send(message);
       }
+    });
+  };
+
+  const emitToAllConnectedUsers = (payload: Record<string, unknown>) => {
+    wsClientsByUserId.forEach((_clients, connectedUserId) => {
+      emitToUser(connectedUserId, payload);
     });
   };
 
@@ -209,6 +244,7 @@ export async function registerRoutes(
     const url = new URL(req.url || "", "http://localhost");
     const userId = Number(url.searchParams.get("userId"));
     let activeRoomUserId: number | null = null;
+    let activeTaskGroupId: number | null = null;
     if (!Number.isFinite(userId)) {
       socket.close();
       return;
@@ -223,9 +259,31 @@ export async function registerRoutes(
     if (!wsClientsByUserId.has(userId)) {
       wsClientsByUserId.set(userId, new Set<WebSocket>());
     }
-    wsClientsByUserId.get(userId)!.add(socket);
+    const userSockets = wsClientsByUserId.get(userId)!;
+    const wasOffline = userSockets.size === 0;
+    userSockets.add(socket);
+
+    userPresenceByUserId.set(userId, { isOnline: true, lastSeenAt: null });
+    if (wasOffline) {
+      emitToAllConnectedUsers({
+        type: "chat:presence",
+        payload: { userId, isOnline: true, lastSeenAt: null },
+      });
+    }
 
     await pushUnreadUpdate(userId);
+    if (socket.readyState === WebSocket.OPEN) {
+      socket.send(
+        JSON.stringify({
+          type: "chat:presence-snapshot",
+          payload: Array.from(userPresenceByUserId.entries()).map(([presenceUserId, presence]) => ({
+            userId: presenceUserId,
+            isOnline: presence.isOnline,
+            lastSeenAt: presence.lastSeenAt,
+          })),
+        }),
+      );
+    }
 
     socket.on("message", (raw) => {
       try {
@@ -265,6 +323,39 @@ export async function registerRoutes(
               .then(() => pushUnreadUpdate(userId))
               .catch(() => {});
           }
+          return;
+        }
+
+        if (type === "chat:active-task-group") {
+          const rawTaskId = payload?.activeTaskId;
+          const nextTaskId = rawTaskId == null ? null : Number(rawTaskId);
+          if (nextTaskId !== null && !Number.isFinite(nextTaskId)) {
+            return;
+          }
+
+          if (activeTaskGroupId !== null) {
+            removeActiveTaskGroup(userId, activeTaskGroupId);
+          }
+          activeTaskGroupId = nextTaskId;
+          if (activeTaskGroupId !== null) {
+            addActiveTaskGroup(userId, activeTaskGroupId);
+          }
+          return;
+        }
+
+        if (type === "chat:typing") {
+          const toUserId = Number(payload?.toUserId);
+          if (!Number.isFinite(toUserId) || toUserId === userId) {
+            return;
+          }
+          emitToUser(toUserId, {
+            type: "chat:typing",
+            payload: {
+              fromUserId: userId,
+              isTyping: !!payload?.isTyping,
+            },
+          });
+          return;
         }
       } catch {
         // ignore invalid socket payload
@@ -275,11 +366,20 @@ export async function registerRoutes(
       if (activeRoomUserId !== null) {
         removeActiveChatPair(userId, activeRoomUserId);
       }
+      if (activeTaskGroupId !== null) {
+        removeActiveTaskGroup(userId, activeTaskGroupId);
+      }
       const clients = wsClientsByUserId.get(userId);
       if (!clients) return;
       clients.delete(socket);
       if (clients.size === 0) {
         wsClientsByUserId.delete(userId);
+        const lastSeenAt = new Date().toISOString();
+        userPresenceByUserId.set(userId, { isOnline: false, lastSeenAt });
+        emitToAllConnectedUsers({
+          type: "chat:presence",
+          payload: { userId, isOnline: false, lastSeenAt },
+        });
       }
     });
   });
@@ -688,6 +788,16 @@ export async function registerRoutes(
       });
       await pushUnreadUpdate(req.user.id);
       await pushUnreadUpdate(input.toUserId);
+      if (!shouldMarkReadImmediately) {
+        await emitNotification([input.toUserId], {
+          title: "New Message",
+          description: `${req.user.name} sent you a message.`,
+          actorUserId: req.user.id,
+          type: "chat_message",
+          entityType: "chat",
+          entityId: req.user.id,
+        });
+      }
       res.status(201).json(message);
     } catch (err) {
       if (err instanceof z.ZodError) {
@@ -844,6 +954,21 @@ export async function registerRoutes(
           payload: { taskId, fromUserId: req.user.id },
         });
       });
+
+      const notificationRecipients = participantIds.filter((participantId) => {
+        if (participantId === req.user.id) return false;
+        return !isUserViewingTaskGroup(participantId, taskId);
+      });
+      if (notificationRecipients.length > 0) {
+        await emitNotification(notificationRecipients, {
+          title: "New Group Message",
+          description: `${req.user.name} sent a message in "${task.title}".`,
+          actorUserId: req.user.id,
+          type: "task_group_message",
+          entityType: "task",
+          entityId: taskId,
+        });
+      }
 
       res.status(201).json(message);
     } catch (err) {
