@@ -1074,6 +1074,14 @@ async function seedDatabase() {
       console.log("ℹ️ Users already exist; skipping seed.");
     }
   } catch (e) {
+    const err = e as NodeJS.ErrnoException;
+    if (err?.code === "ECONNREFUSED") {
+      console.error("❌ Seed failed: Database connection refused.");
+      console.error(
+        "   Check DATABASE_URL host/port and ensure MySQL is running (example: 127.0.0.1:3306).",
+      );
+      return;
+    }
     console.error("❌ Seed failed:", e);
   }
 }

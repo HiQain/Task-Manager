@@ -1,6 +1,7 @@
 import {
   mysqlTable,
   text,
+  longtext,
   int,
   varchar,
   boolean,
@@ -28,9 +29,9 @@ export const tasks = mysqlTable("tasks", {
   priority: varchar("priority", { length: 30 }).notNull().default("medium"),
   completed: boolean("completed").default(false),
   assignedToId: int("assigned_to_id").references(() => users.id),
-  assignedToIds: text("assigned_to_ids").default("[]"),
+  assignedToIds: text("assigned_to_ids"),
   createdById: int("created_by_id").references(() => users.id),
-  attachments: text("attachments").default("[]"),
+  attachments: longtext("attachments"),
   dueDate: timestamp("due_date", { mode: "date" }),
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
 });
