@@ -483,6 +483,36 @@ export async function registerRoutes(
     }
   });
 
+  app.patch(api.users.update.path, async (req, res) => {
+    if (!req.user || !isAdminUser(req.user)) {
+      return res.status(403).json({ message: "Only admins can update users" });
+    }
+
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id)) {
+        return res.status(400).json({ message: "Invalid user id" });
+      }
+
+      const existing = await storage.getUser(id);
+      if (!existing) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      const input = api.users.update.input.parse(req.body);
+      const updatedUser = await storage.updateUser(id, input);
+      res.json(updatedUser);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({
+          message: err.errors[0].message,
+          field: err.errors[0].path.join("."),
+        });
+      }
+      throw err;
+    }
+  });
+
   app.delete(api.users.delete.path, async (req, res) => {
     const id = Number(req.params.id);
     await storage.deleteUser(id);

@@ -1,4 +1,4 @@
-import { useUsers, useCreateUser, useDeleteUser } from "@/hooks/use-users";
+import { useUsers, useCreateUser, useDeleteUser, useUpdateUser } from "@/hooks/use-users";
 import { useAuth } from "@/hooks/use-auth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -8,10 +8,20 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { insertUserSchema, type InsertUser } from "@shared/schema";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, UserPlus, Trash2, Mail, User as UserIcon } from "lucide-react";
+import { Loader2, UserPlus, Trash2, Search, Pencil } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useLocation } from "wouter";
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 
 export default function Users() {
   const { data: users, isLoading } = useUsers();
@@ -19,7 +29,16 @@ export default function Users() {
   const [, setLocation] = useLocation();
   const createUser = useCreateUser();
   const deleteUser = useDeleteUser();
+  const updateUser = useUpdateUser();
   const { toast } = useToast();
+  const [search, setSearch] = useState("");
+  const [editingUserId, setEditingUserId] = useState<number | null>(null);
+  const [editForm, setEditForm] = useState({
+    name: "",
+    email: "",
+    password: "",
+    role: "user" as "user" | "admin",
+  });
 
   // Redirect non-admin users to dashboard
   useEffect(() => {
@@ -56,6 +75,57 @@ export default function Users() {
     if (confirm("Are you sure you want to remove this user? This will affect their assigned tasks.")) {
       deleteUser.mutate(id, {
         onSuccess: () => toast({ title: "User deleted" }),
+      });
+    }
+  };
+
+  const filteredUsers = useMemo(() => {
+    const q = search.toLowerCase().trim();
+    if (!q) return users || [];
+    return (users || []).filter((member) => {
+      return `${member.name} ${member.email} ${member.role}`.toLowerCase().includes(q);
+    });
+  }, [users, search]);
+
+  const closeEditDialog = () => {
+    setEditingUserId(null);
+    setEditForm({ name: "", email: "", password: "", role: "user" });
+  };
+
+  const openEditDialog = (member: { id: number; name: string; email: string; role: string }) => {
+    setEditingUserId(member.id);
+    setEditForm({
+      name: member.name,
+      email: member.email,
+      password: "",
+      role: member.role === "admin" ? "admin" : "user",
+    });
+  };
+
+  const handleUpdate = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!editingUserId) return;
+
+    const payload: Partial<InsertUser> = {
+      name: editForm.name.trim(),
+      email: editForm.email.trim(),
+      role: editForm.role,
+    };
+
+    const nextPassword = editForm.password.trim();
+    if (nextPassword) {
+      payload.password = nextPassword;
+    }
+
+    try {
+      await updateUser.mutateAsync({ id: editingUserId, data: payload });
+      toast({ title: "User updated", description: "Team member updated successfully." });
+      closeEditDialog();
+    } catch (error) {
+      toast({
+        title: "Update failed",
+        description: error instanceof Error ? error.message : "Something went wrong",
+        variant: "destructive",
       });
     }
   };
@@ -149,46 +219,144 @@ export default function Users() {
         </Card>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {users?.map((user) => (
-          <Card key={user.id} className="hover:shadow-md transition-all group">
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3 flex-1">
-                  <Avatar className="h-10 w-10 border-2 border-primary/10">
-                    <AvatarFallback className="bg-primary/5 text-primary font-bold">
-                      {user.name.split(' ').map(n => n[0]).join('').toUpperCase()}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div>
-                    <h4 className="font-semibold text-foreground">{user.name}</h4>
-                    <p className="text-xs text-muted-foreground flex items-center gap-1">
-                      <Mail className="w-3 h-3" />
-                      {user.email}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className={`text-xs px-2 py-1 rounded-full whitespace-nowrap ${user.role === 'admin'
-                      ? 'bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-200'
-                      : 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-200'
-                    }`}>
-                    {user.role === 'admin' ? 'Admin' : 'User'}
-                  </span>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                    onClick={() => handleDelete(user.id)}
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
+      <div className="bg-card rounded-xl border border-border shadow-sm overflow-hidden">
+        <div className="p-4 border-b border-border/60">
+          <div className="relative max-w-sm">
+            <Search className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search by name, email, role..."
+              className="h-10 pl-9 bg-background"
+            />
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader className="bg-muted/30">
+              <TableRow>
+                <TableHead className="min-w-[220px]">Name</TableHead>
+                <TableHead className="min-w-[220px]">Email</TableHead>
+                <TableHead className="min-w-[120px]">Role</TableHead>
+                <TableHead className="text-right min-w-[100px]">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filteredUsers.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={4} className="h-36 text-center text-muted-foreground">
+                    {search.trim() ? "No matching team member found." : "No users found."}
+                  </TableCell>
+                </TableRow>
+              ) : (
+                filteredUsers.map((member) => (
+                  <TableRow key={member.id} className="group hover:bg-muted/20">
+                    <TableCell>
+                      <div className="flex items-center gap-3">
+                        <Avatar className="h-8 w-8 border border-primary/10">
+                          <AvatarFallback className="text-[11px] bg-primary/5 text-primary font-semibold">
+                            {member.name.split(" ").map((n) => n[0]).join("").toUpperCase()}
+                          </AvatarFallback>
+                        </Avatar>
+                        <span className="font-medium text-foreground">{member.name}</span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{member.email}</TableCell>
+                    <TableCell>
+                      <Badge
+                        variant="outline"
+                        className={member.role === "admin"
+                          ? "text-purple-700 bg-purple-50 border-purple-100"
+                          : "text-blue-700 bg-blue-50 border-blue-100"}
+                      >
+                        {member.role === "admin" ? "Admin" : "User"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-muted-foreground hover:text-primary"
+                        onClick={() => openEditDialog(member)}
+                      >
+                        <Pencil className="w-4 h-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                        onClick={() => handleDelete(member.id)}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        </div>
       </div>
+
+      <Dialog open={editingUserId !== null} onOpenChange={(open) => (!open ? closeEditDialog() : undefined)}>
+        <DialogContent className="w-[calc(100vw-2rem)] sm:w-full sm:max-w-[480px] max-h-[85vh] overflow-y-auto fixed !top-1/2 !left-1/2 !-translate-x-1/2 !-translate-y-1/2">
+          <DialogHeader>
+            <DialogTitle>Edit Team Member</DialogTitle>
+            <DialogDescription>
+              Update user details. Leave password blank to keep current password.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleUpdate} className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Full Name</label>
+              <Input
+                value={editForm.name}
+                onChange={(e) => setEditForm((prev) => ({ ...prev, name: e.target.value }))}
+                placeholder="Full name"
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Email</label>
+              <Input
+                type="email"
+                value={editForm.email}
+                onChange={(e) => setEditForm((prev) => ({ ...prev, email: e.target.value }))}
+                placeholder="Email address"
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Role</label>
+              <select
+                value={editForm.role}
+                onChange={(e) => setEditForm((prev) => ({ ...prev, role: e.target.value as "user" | "admin" }))}
+                className="h-10 w-full rounded-md border border-input bg-background px-3 py-2"
+              >
+                <option value="user">User</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">New Password (Optional)</label>
+              <Input
+                type="password"
+                value={editForm.password}
+                onChange={(e) => setEditForm((prev) => ({ ...prev, password: e.target.value }))}
+                placeholder="Leave blank to keep unchanged"
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button type="button" variant="outline" onClick={closeEditDialog}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={updateUser.isPending}>
+                {updateUser.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Save Changes"}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

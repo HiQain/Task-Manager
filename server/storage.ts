@@ -32,6 +32,7 @@ export interface IStorage {
   getUser(id: number): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
+  updateUser(id: number, updates: Partial<InsertUser>): Promise<User>;
   deleteUser(id: number): Promise<void>;
   clearAllUsers(): Promise<void>;
 
@@ -139,6 +140,22 @@ export class DatabaseStorage implements IStorage {
       throw new Error("Failed to create user");
     }
     return user;
+  }
+
+  async updateUser(id: number, updates: Partial<InsertUser>): Promise<User> {
+    const toUpdate = { ...updates } as Partial<InsertUser> & { password?: string };
+    if (typeof toUpdate.password === "string") {
+      toUpdate.password = hashPassword(toUpdate.password);
+    } else {
+      delete toUpdate.password;
+    }
+
+    await db.update(users).set(toUpdate).where(eq(users.id, id));
+    const [updatedUser] = await db.select().from(users).where(eq(users.id, id));
+    if (!updatedUser) {
+      throw new Error("User not found");
+    }
+    return updatedUser;
   }
 
   async deleteUser(id: number): Promise<void> {

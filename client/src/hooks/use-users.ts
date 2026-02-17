@@ -33,3 +33,16 @@ export function useDeleteUser() {
     },
   });
 }
+
+export function useUpdateUser() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, data }: { id: number; data: Partial<InsertUser> }) => {
+      const res = await apiRequest("PATCH", buildUrl(api.users.update.path, { id }), data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [api.users.list.path] });
+    },
+  });
+}

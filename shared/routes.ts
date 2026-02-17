@@ -69,6 +69,21 @@ export const api = {
         404: errorSchemas.notFound,
       },
     },
+    update: {
+      method: 'PATCH' as const,
+      path: '/api/users/:id',
+      input: z.object({
+        name: z.string().min(1).optional(),
+        email: z.string().email().optional(),
+        password: z.string().min(6, "Password must be at least 6 characters").optional(),
+        role: z.enum(["user", "admin"]).optional(),
+      }),
+      responses: {
+        200: z.custom<typeof users.$inferSelect>(),
+        400: errorSchemas.validation,
+        404: errorSchemas.notFound,
+      },
+    },
   },
   tasks: {
     list: {
