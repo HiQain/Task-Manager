@@ -70,3 +70,19 @@ export function useMarkAllNotificationsRead() {
   });
 }
 
+export function useDeleteNotification() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(buildUrl(api.notifications.delete.path, { id }), {
+        method: api.notifications.delete.method,
+        credentials: "include",
+      });
+      await readJsonOrThrow(res, "Failed to delete notification");
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [api.notifications.list.path] });
+      queryClient.invalidateQueries({ queryKey: [api.notifications.unread.path] });
+    },
+  });
+}

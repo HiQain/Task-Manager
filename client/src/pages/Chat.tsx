@@ -21,6 +21,7 @@ type ChatAttachment = {
 type PreviewAttachment = Pick<ChatAttachment, "name" | "data" | "type">;
 
 const CHAT_ATTACHMENT_PREFIX = "__CHAT_ATTACHMENTS_V1__:";
+const PENDING_CALL_STORAGE_KEY = "pending_incoming_call_v1";
 const MAX_CHAT_ATTACHMENTS = 2;
 const MAX_CHAT_ATTACHMENT_BYTES = 20 * 1024;
 const MAX_CHAT_MESSAGE_CHARS = 58000;
@@ -357,6 +358,30 @@ export default function Chat() {
       ringtoneIntervalRef.current = null;
     }
   };
+
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(PENDING_CALL_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as { fromUserId?: unknown; sdp?: unknown; createdAt?: unknown };
+      const fromUserId = Number(parsed?.fromUserId);
+      const createdAt = Number(parsed?.createdAt);
+      const sdp = parsed?.sdp;
+      const isFresh = Number.isFinite(createdAt) ? Date.now() - createdAt < 45_000 : true;
+      const isValidSdp = !!sdp && typeof sdp === "object";
+      if (!Number.isFinite(fromUserId) || !isValidSdp || !isFresh) {
+        sessionStorage.removeItem(PENDING_CALL_STORAGE_KEY);
+        return;
+      }
+      pendingOfferFromRef.current = fromUserId;
+      pendingOfferRef.current = sdp as RTCSessionDescriptionInit;
+      setIncomingCallFromUserId(fromUserId);
+      startRinging("incoming");
+      sessionStorage.removeItem(PENDING_CALL_STORAGE_KEY);
+    } catch {
+      sessionStorage.removeItem(PENDING_CALL_STORAGE_KEY);
+    }
+  }, []);
 
   const sendActiveRoom = useCallback((targetUserId?: number) => {
     const socket = wsRef.current;

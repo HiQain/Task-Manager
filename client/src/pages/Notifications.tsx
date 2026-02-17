@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { useMarkAllNotificationsRead, useMarkNotificationRead, useNotifications } from "@/hooks/use-notifications";
-import { Loader2 } from "lucide-react";
+import { useDeleteNotification, useMarkAllNotificationsRead, useMarkNotificationRead, useNotifications } from "@/hooks/use-notifications";
+import { Loader2, Trash2 } from "lucide-react";
 
 function formatDate(value: unknown): string {
   const date = value ? new Date(value as any) : null;
@@ -13,6 +13,7 @@ export default function Notifications() {
   const { data: notifications, isLoading } = useNotifications();
   const markRead = useMarkNotificationRead();
   const markAllRead = useMarkAllNotificationsRead();
+  const deleteNotification = useDeleteNotification();
 
   if (isLoading) {
     return (
@@ -54,18 +55,29 @@ export default function Notifications() {
                     </p>
                   </div>
                   <div className="shrink-0">
-                    {isUnread ? (
+                    <div className="flex items-center gap-2">
+                      {isUnread ? (
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => markRead.mutate(notification.id)}
+                          disabled={markRead.isPending || deleteNotification.isPending}
+                        >
+                          Mark Read
+                        </Button>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">Read</span>
+                      )}
                       <Button
                         size="sm"
-                        variant="secondary"
-                        onClick={() => markRead.mutate(notification.id)}
-                        disabled={markRead.isPending}
+                        variant="ghost"
+                        onClick={() => deleteNotification.mutate(notification.id)}
+                        disabled={deleteNotification.isPending || markRead.isPending}
                       >
-                        Mark Read
+                        <Trash2 className="w-4 h-4" />
+                        Delete
                       </Button>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">Read</span>
-                    )}
+                    </div>
                   </div>
                 </CardContent>
               </Card>
@@ -82,4 +94,3 @@ export default function Notifications() {
     </div>
   );
 }
-

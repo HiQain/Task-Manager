@@ -277,6 +277,15 @@ export const api = {
         401: errorSchemas.notFound,
       },
     },
+    delete: {
+      method: 'DELETE' as const,
+      path: '/api/notifications/:id',
+      responses: {
+        200: z.object({ success: z.boolean() }),
+        401: errorSchemas.notFound,
+        404: errorSchemas.notFound,
+      },
+    },
   },
 };
 

@@ -10,6 +10,8 @@ import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { useToast } from "@/hooks/use-toast";
 import { useNotificationUnreadCount } from "@/hooks/use-notifications";
 
+const PENDING_CALL_STORAGE_KEY = "pending_incoming_call_v1";
+
 export function Sidebar({
   onNewTask,
   mobileOpen,
@@ -19,7 +21,7 @@ export function Sidebar({
   mobileOpen: boolean;
   onMobileOpenChange: (open: boolean) => void;
 }) {
-  const [location] = useLocation();
+  const [location, setLocation] = useLocation();
   const { user } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -50,6 +52,28 @@ export function Sidebar({
         queryClient.invalidateQueries({ queryKey: [api.tasks.get.path] });
       }
 
+      if (type === "webrtc:signal") {
+        const fromUserId = Number(payload?.fromUserId);
+        const signalType = payload?.signal?.type;
+        const signalSdp = payload?.signal?.sdp;
+        if (!location.startsWith("/chat") && Number.isFinite(fromUserId) && signalType === "offer" && signalSdp) {
+          try {
+            sessionStorage.setItem(
+              PENDING_CALL_STORAGE_KEY,
+              JSON.stringify({
+                fromUserId,
+                sdp: signalSdp,
+                createdAt: Date.now(),
+              }),
+            );
+          } catch {
+            // ignore session storage errors
+          }
+          setLocation(`/chat?userId=${fromUserId}`);
+          return;
+        }
+      }
+
       if (type === "notify" && payload?.title) {
         toast({
           title: String(payload.title),
@@ -70,7 +94,7 @@ export function Sidebar({
     return () => {
       ws.close();
     };
-  }, [user?.id, queryClient, toast]);
+  }, [user?.id, queryClient, toast, location, setLocation]);
 
   // All admin items
   const adminNavItems = [

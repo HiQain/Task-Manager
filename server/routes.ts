@@ -560,6 +560,22 @@ export async function registerRoutes(
     res.json({ success: true });
   });
 
+  app.delete(api.notifications.delete.path, async (req, res) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ message: "Invalid notification id" });
+    }
+    const existing = await storage.getNotification(id);
+    if (!existing || existing.userId !== req.user.id) {
+      return res.status(404).json({ message: "Notification not found" });
+    }
+    await storage.deleteNotification(id);
+    res.json({ success: true });
+  });
+
   // Tasks API
   app.get(api.tasks.list.path, async (req, res) => {
     if (!req.user) {
