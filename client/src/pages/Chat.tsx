@@ -38,13 +38,13 @@ function decodeMessagePayload(rawContent: unknown): { text: string; attachments:
     const text = typeof parsed?.text === "string" ? parsed.text : "";
     const attachments = Array.isArray(parsed?.attachments)
       ? parsed.attachments
-          .filter((item): item is ChatAttachment => {
-            return !!item && typeof item === "object"
-              && typeof (item as any).name === "string"
-              && typeof (item as any).data === "string"
-              && typeof (item as any).type === "string"
-              && typeof (item as any).size === "number";
-          })
+        .filter((item): item is ChatAttachment => {
+          return !!item && typeof item === "object"
+            && typeof (item as any).name === "string"
+            && typeof (item as any).data === "string"
+            && typeof (item as any).type === "string"
+            && typeof (item as any).size === "number";
+        })
       : [];
     return { text, attachments };
   } catch {
@@ -296,7 +296,7 @@ export default function Chat() {
     setActiveTaskGroupId(taskId);
     setActiveUserId(undefined);
     setLocation(`/chat?taskId=${taskId}`);
-    void markTaskGroupRead.mutateAsync(taskId).catch(() => {});
+    void markTaskGroupRead.mutateAsync(taskId).catch(() => { });
   };
 
   useEffect(() => {
@@ -449,14 +449,14 @@ export default function Chat() {
 
   useEffect(() => {
     if (!activeTaskGroupId) return;
-    void markTaskGroupRead.mutateAsync(activeTaskGroupId).catch(() => {});
+    void markTaskGroupRead.mutateAsync(activeTaskGroupId).catch(() => { });
   }, [activeTaskGroupId]);
 
   useEffect(() => {
     if (!activeTaskGroupId) return;
     if (!Array.isArray(taskGroupMessages)) return;
     if (taskGroupMessages.length === 0) return;
-    void markTaskGroupRead.mutateAsync(activeTaskGroupId).catch(() => {});
+    void markTaskGroupRead.mutateAsync(activeTaskGroupId).catch(() => { });
   }, [activeTaskGroupId, taskGroupMessages?.length]);
 
   useEffect(() => {
@@ -1004,9 +1004,8 @@ export default function Chat() {
                   <button
                     key={`group-${task.id}`}
                     onClick={() => handleSelectTaskGroup(task.id)}
-                    className={`w-full text-left px-3 py-2.5 rounded-lg transition-colors flex items-center gap-2 ${
-                      isActive ? "bg-primary/10 text-primary" : "hover:bg-muted text-foreground"
-                    }`}
+                    className={`w-full text-left px-3 py-2.5 rounded-lg transition-colors flex items-center gap-2 ${isActive ? "bg-primary/10 text-primary" : "hover:bg-muted text-foreground"
+                      }`}
                   >
                     <div className="h-7 w-7 rounded-md border border-primary/15 bg-primary/5 flex items-center justify-center text-[11px] font-semibold text-primary">
                       #
@@ -1085,53 +1084,53 @@ export default function Chat() {
                 <ChevronLeft className="w-4 h-4" />
               </Button>
               <div>
-              <h3 className="font-semibold">
-                {isGroupMode ? (activeTask?.title ? `Task Group: ${activeTask.title}` : "Task Group") : (activeUser?.name || "Select user")}
-              </h3>
-              <p className="text-xs text-muted-foreground">
-                {
-                  isGroupMode
-                    ? `Participants: ${activeTaskParticipants.map((p) => p.name).join(", ")}`
-                    : activeUser?.name
-                      ? activeUserSubtitle
-                      : "Select User"
-                }
-              </p>
+                <h3 className="font-semibold">
+                  {isGroupMode ? (activeTask?.title ? `Task Group: ${activeTask.title}` : "Task Group") : (activeUser?.name || "Select user")}
+                </h3>
+                <p className="text-xs text-muted-foreground">
+                  {
+                    isGroupMode
+                      ? `Participants: ${activeTaskParticipants.map((p) => p.name).join(", ")}`
+                      : activeUser?.name
+                        ? activeUserSubtitle
+                        : "Select User"
+                  }
+                </p>
               </div>
             </div>
             {!isGroupMode && (
-            <div className="flex flex-wrap items-center gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                className="h-9"
-                disabled={!activeUserId || isCalling || isInCall}
-                onClick={() => void startCall()}
-              >
-                <Phone className="w-4 h-4 sm:mr-2" />
-                <span className="hidden sm:inline">Call</span>
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                className="h-9"
-                disabled={!isCalling && !isInCall}
-                onClick={toggleMute}
-              >
-                {isMuted ? <MicOff className="w-4 h-4 sm:mr-2" /> : <Mic className="w-4 h-4 sm:mr-2" />}
-                <span className="hidden sm:inline">{isMuted ? "Unmute" : "Mute"}</span>
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                className="h-9"
-                disabled={!isCalling && !isInCall}
-                onClick={() => stopCurrentSession(true)}
-              >
-                <PhoneOff className="w-4 h-4 sm:mr-2" />
-                <span className="hidden sm:inline">End</span>
-              </Button>
-            </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-9"
+                  disabled={!activeUserId || isCalling || isInCall}
+                  onClick={() => void startCall()}
+                >
+                  <Phone className="w-4 h-4 sm:mr-2" />
+                  <span className="hidden sm:inline">Call</span>
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-9"
+                  disabled={!isCalling && !isInCall}
+                  onClick={toggleMute}
+                >
+                  {isMuted ? <MicOff className="w-4 h-4 sm:mr-2" /> : <Mic className="w-4 h-4 sm:mr-2" />}
+                  <span className="hidden sm:inline">{isMuted ? "Unmute" : "Mute"}</span>
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="h-9"
+                  disabled={!isCalling && !isInCall}
+                  onClick={() => stopCurrentSession(true)}
+                >
+                  <PhoneOff className="w-4 h-4 sm:mr-2" />
+                  <span className="hidden sm:inline">End</span>
+                </Button>
+              </div>
             )}
           </div>
         </div>
