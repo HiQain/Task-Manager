@@ -19,6 +19,7 @@ import Overview from "@/pages/Overview";
 import BoardView from "@/pages/BoardView";
 import ListView from "@/pages/ListView";
 import Users from "@/pages/Users";
+import Members from "@/pages/Members";
 import AdminConsole from "@/pages/AdminConsole";
 import Chat from "@/pages/Chat";
 import Notifications from "@/pages/Notifications";
@@ -52,6 +53,12 @@ function Router() {
       <Route path="/users">
         <ProtectedRoute>
           <Users />
+        </ProtectedRoute>
+      </Route>
+
+      <Route path="/members">
+        <ProtectedRoute>
+          <Members />
         </ProtectedRoute>
       </Route>
 
@@ -96,6 +103,7 @@ function Layout({ children }: { children: React.ReactNode }) {
       case "/board": return "Hiqain Board";
       case "/list": return "All Tasks";
       case "/users": return "Team Management";
+      case "/members": return "Members";
       case "/chat": return "Team Chat";
       case "/notifications": return "Notifications";
       case "/profile": return "Profile";

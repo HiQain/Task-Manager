@@ -9,7 +9,6 @@ import { api } from "@shared/routes";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { useToast } from "@/hooks/use-toast";
 import { useNotificationUnreadCount } from "@/hooks/use-notifications";
-import { useUsers } from "@/hooks/use-users";
 
 const PENDING_CALL_STORAGE_KEY = "pending_incoming_call_v1";
 type IncomingCallState = {
@@ -26,12 +25,11 @@ export function Sidebar({
   mobileOpen: boolean;
   onMobileOpenChange: (open: boolean) => void;
 }) {
-  const [location] = useLocation();
+  const [location, setLocation] = useLocation();
   const { user } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { data: unreadCounts } = useUnreadCounts();
-  const { data: users } = useUsers();
   const { data: notificationsUnread } = useNotificationUnreadCount();
   const totalUnread = unreadCounts?.total || 0;
   const notificationUnreadCount = notificationsUnread?.count || 0;
@@ -367,7 +365,7 @@ export function Sidebar({
   };
 
   const callUserId = incomingCall?.fromUserId ?? connectedPeerUserId;
-  const callUserName = users?.find((u) => u.id === callUserId)?.name || "Unknown user";
+  const callUserName = callUserId ? `User ${callUserId}` : "Unknown user";
 
   // All admin items
   const adminNavItems = [
@@ -382,6 +380,7 @@ export function Sidebar({
   // User only sees tasks for drag & drop
   const userNavItems = [
     { label: "Hiqain Board", icon: Kanban, href: "/board" },
+    { label: "Members", icon: Users, href: "/members" },
     { label: "Chat", icon: MessageSquare, href: "/chat" },
     { label: "Notifications", icon: Bell, href: "/notifications" },
   ];

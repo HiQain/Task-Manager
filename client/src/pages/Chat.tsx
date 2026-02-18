@@ -331,6 +331,7 @@ export default function Chat() {
 
   useEffect(() => {
     if (activeTaskGroupId) return;
+    if (isChatUsersLoading) return;
     if (filteredUsers.length === 0) {
       setActiveUserId(undefined);
       return;
@@ -338,11 +339,11 @@ export default function Chat() {
     if (activeUserId && !filteredUsers.some((u) => u.id === activeUserId)) {
       setActiveUserId(undefined);
     }
-  }, [filteredUsers, activeUserId, activeTaskGroupId]);
+  }, [filteredUsers, activeUserId, activeTaskGroupId, isChatUsersLoading]);
 
   const activeUser = useMemo(
-    () => filteredUsers.find((u) => u.id === activeUserId),
-    [filteredUsers, activeUserId]
+    () => teamMembers.find((u) => u.id === activeUserId),
+    [teamMembers, activeUserId]
   );
   const activeTask = useMemo(
     () => (tasks || []).find((t) => t.id === activeTaskGroupId) || taskGroups.find((entry) => entry.task.id === activeTaskGroupId)?.task,
