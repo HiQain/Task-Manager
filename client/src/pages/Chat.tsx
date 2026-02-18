@@ -10,6 +10,16 @@ import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
 import { useTasks } from "@/hooks/use-tasks";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 type ChatAttachment = {
   name: string;
@@ -175,6 +185,7 @@ export default function Chat() {
   const [draft, setDraft] = useState("");
   const [draftAttachments, setDraftAttachments] = useState<ChatAttachment[]>([]);
   const [previewAttachment, setPreviewAttachment] = useState<PreviewAttachment | null>(null);
+  const [duplicatePromptFileName, setDuplicatePromptFileName] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
@@ -208,10 +219,35 @@ export default function Chat() {
   const typingTargetUserIdRef = useRef<number | undefined>(undefined);
   const sentTypingRef = useRef(false);
   const usersRef = useRef(users);
+  const duplicateChoiceResolverRef = useRef<((choice: "replace" | "duplicate") => void) | null>(null);
 
   useEffect(() => {
     usersRef.current = users;
   }, [users]);
+
+  const resolveDuplicateChoice = (choice: "replace" | "duplicate") => {
+    if (duplicateChoiceResolverRef.current) {
+      duplicateChoiceResolverRef.current(choice);
+      duplicateChoiceResolverRef.current = null;
+    }
+    setDuplicatePromptFileName(null);
+  };
+
+  const askDuplicateChoice = (fileName: string): Promise<"replace" | "duplicate"> => {
+    setDuplicatePromptFileName(fileName);
+    return new Promise((resolve) => {
+      duplicateChoiceResolverRef.current = resolve;
+    });
+  };
+
+  useEffect(() => {
+    return () => {
+      if (duplicateChoiceResolverRef.current) {
+        duplicateChoiceResolverRef.current("duplicate");
+        duplicateChoiceResolverRef.current = null;
+      }
+    };
+  }, []);
 
   const teamMembers = useMemo(
     () => (users || []).filter((u) => u.id !== user?.id),
@@ -868,6 +904,16 @@ export default function Chat() {
   const displayedMessages = isGroupMode ? (taskGroupMessages || []) : (messages || []);
   const isDisplayedMessagesLoading = isGroupMode ? isTaskGroupMessagesLoading : isMessagesLoading;
   const sendPending = isGroupMode ? sendTaskGroupMessage.isPending : sendMessage.isPending;
+  const conversationAttachmentNameSet = useMemo(() => {
+    const names = new Set<string>();
+    displayedMessages.forEach((msg) => {
+      const parsed = decodeMessagePayload(msg.content);
+      parsed.attachments.forEach((attachment) => {
+        names.add(attachment.name.trim().toLowerCase());
+      });
+    });
+    return names;
+  }, [displayedMessages]);
 
   const handleSend = async () => {
     const content = draft.trim();
@@ -946,22 +992,34 @@ export default function Chat() {
 
   const handleAttachmentSelect = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
-    const existingCount = draftAttachments.length;
-    const allowedSlots = Math.max(0, MAX_CHAT_ATTACHMENTS - existingCount);
-    if (allowedSlots === 0) {
-      toast({
-        title: "Attachment limit reached",
-        description: `You can attach up to ${MAX_CHAT_ATTACHMENTS} files in one message.`,
-        variant: "destructive",
-      });
-      return;
-    }
-
-    const selected = Array.from(files).slice(0, allowedSlots);
+    const selected = Array.from(files);
 
     try {
-      const nextItems: ChatAttachment[] = [];
+      const nextItems: ChatAttachment[] = [...draftAttachments];
       for (const file of selected) {
+        const normalizedName = file.name.trim().toLowerCase();
+        const duplicateIndex = nextItems.findIndex(
+          (attachment) => attachment.name.trim().toLowerCase() === normalizedName,
+        );
+        const existsInConversation = conversationAttachmentNameSet.has(normalizedName);
+        if (duplicateIndex >= 0 || existsInConversation) {
+          const choice = await askDuplicateChoice(file.name);
+          if (choice === "replace") {
+            if (duplicateIndex >= 0) {
+              nextItems.splice(duplicateIndex, 1);
+            }
+          }
+        }
+
+        if (nextItems.length >= MAX_CHAT_ATTACHMENTS) {
+          toast({
+            title: "Attachment limit reached",
+            description: `You can attach up to ${MAX_CHAT_ATTACHMENTS} files in one message.`,
+            variant: "destructive",
+          });
+          break;
+        }
+
         if (file.type.startsWith("image/")) {
           const compressed = await compressImageToLimit(file, MAX_CHAT_ATTACHMENT_BYTES);
           if (!compressed) {
@@ -998,8 +1056,7 @@ export default function Chat() {
           size: file.size,
         });
       }
-      if (nextItems.length === 0) return;
-      setDraftAttachments((prev) => [...prev, ...nextItems]);
+      setDraftAttachments(nextItems);
     } catch {
       toast({
         title: "Attachment error",
@@ -1466,6 +1523,25 @@ export default function Chat() {
           )}
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={!!duplicatePromptFileName}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Same File Name Found</AlertDialogTitle>
+            <AlertDialogDescription>
+              `{duplicatePromptFileName}` already exists in attachments. Choose how to continue.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => resolveDuplicateChoice("duplicate")}>
+              Share Duplicate
+            </AlertDialogCancel>
+            <AlertDialogAction onClick={() => resolveDuplicateChoice("replace")}>
+              Upload New
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
