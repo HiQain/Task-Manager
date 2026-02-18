@@ -23,6 +23,13 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
+function getDisplayDesignation(member: { designation?: string | null; role: string }) {
+  if (member.role === "admin") return "Admin";
+  const raw = (member.designation || "").trim();
+  if (raw) return raw;
+  return "No designation";
+}
+
 export default function Users() {
   const { data: users, isLoading } = useUsers();
   const { user } = useAuth();
@@ -36,6 +43,7 @@ export default function Users() {
   const [editForm, setEditForm] = useState({
     name: "",
     email: "",
+    designation: "",
     password: "",
     role: "user" as "user" | "admin",
   });
@@ -52,6 +60,7 @@ export default function Users() {
     defaultValues: {
       name: "",
       email: "",
+      designation: "",
       password: "",
       role: "user",
     },
@@ -59,7 +68,19 @@ export default function Users() {
 
   async function onSubmit(data: InsertUser) {
     try {
-      await createUser.mutateAsync(data);
+      const payload: InsertUser = {
+        ...data,
+        name: data.name.trim(),
+        email: data.email.trim(),
+        designation: data.designation.trim(),
+      };
+      const created = await createUser.mutateAsync(payload);
+      if ((created.designation || "").trim() !== payload.designation) {
+        await updateUser.mutateAsync({
+          id: created.id,
+          data: { designation: payload.designation },
+        });
+      }
       form.reset();
       toast({ title: "User created", description: "Team member added successfully." });
     } catch (error) {
@@ -83,20 +104,21 @@ export default function Users() {
     const q = search.toLowerCase().trim();
     if (!q) return users || [];
     return (users || []).filter((member) => {
-      return `${member.name} ${member.email} ${member.role}`.toLowerCase().includes(q);
+      return `${member.name} ${member.email} ${member.designation || ""} ${member.role}`.toLowerCase().includes(q);
     });
   }, [users, search]);
 
   const closeEditDialog = () => {
     setEditingUserId(null);
-    setEditForm({ name: "", email: "", password: "", role: "user" });
+    setEditForm({ name: "", email: "", designation: "", password: "", role: "user" });
   };
 
-  const openEditDialog = (member: { id: number; name: string; email: string; role: string }) => {
+  const openEditDialog = (member: { id: number; name: string; email: string; designation?: string | null; role: string }) => {
     setEditingUserId(member.id);
     setEditForm({
       name: member.name,
       email: member.email,
+      designation: member.designation || "",
       password: "",
       role: member.role === "admin" ? "admin" : "user",
     });
@@ -109,6 +131,7 @@ export default function Users() {
     const payload: Partial<InsertUser> = {
       name: editForm.name.trim(),
       email: editForm.email.trim(),
+      designation: editForm.designation.trim(),
       role: editForm.role,
     };
 
@@ -118,7 +141,13 @@ export default function Users() {
     }
 
     try {
-      await updateUser.mutateAsync({ id: editingUserId, data: payload });
+      const updated = await updateUser.mutateAsync({ id: editingUserId, data: payload });
+      if (payload.designation && (updated.designation || "").trim() !== payload.designation) {
+        await updateUser.mutateAsync({
+          id: editingUserId,
+          data: { designation: payload.designation },
+        });
+      }
       toast({ title: "User updated", description: "Team member updated successfully." });
       closeEditDialog();
     } catch (error) {
@@ -182,6 +211,19 @@ export default function Users() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <FormField
                     control={form.control}
+                    name="designation"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Designation</FormLabel>
+                        <FormControl>
+                          <Input placeholder="e.g. Project Manager" {...field} className="h-11" />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
                     name="password"
                     render={({ field }) => (
                       <FormItem>
@@ -226,7 +268,7 @@ export default function Users() {
             <Input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search by name, email, role..."
+              placeholder="Search by name, email, designation, role..."
               className="h-10 pl-9 bg-background"
             />
           </div>
@@ -237,6 +279,7 @@ export default function Users() {
               <TableRow>
                 <TableHead className="min-w-[220px]">Name</TableHead>
                 <TableHead className="min-w-[220px]">Email</TableHead>
+                <TableHead className="min-w-[180px]">Designation</TableHead>
                 <TableHead className="min-w-[120px]">Role</TableHead>
                 <TableHead className="text-right min-w-[100px]">Actions</TableHead>
               </TableRow>
@@ -244,7 +287,7 @@ export default function Users() {
             <TableBody>
               {filteredUsers.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={4} className="h-36 text-center text-muted-foreground">
+                  <TableCell colSpan={5} className="h-36 text-center text-muted-foreground">
                     {search.trim() ? "No matching team member found." : "No users found."}
                   </TableCell>
                 </TableRow>
@@ -258,10 +301,16 @@ export default function Users() {
                             {member.name.split(" ").map((n) => n[0]).join("").toUpperCase()}
                           </AvatarFallback>
                         </Avatar>
-                        <span className="font-medium text-foreground">{member.name}</span>
+                        <div className="min-w-0">
+                          <p className="font-medium text-foreground truncate">{member.name}</p>
+                          <p className="text-xs text-muted-foreground truncate">
+                            {getDisplayDesignation(member)}
+                          </p>
+                        </div>
                       </div>
                     </TableCell>
                     <TableCell className="text-muted-foreground">{member.email}</TableCell>
+                    <TableCell className="text-muted-foreground">{getDisplayDesignation(member)}</TableCell>
                     <TableCell>
                       <Badge
                         variant="outline"
@@ -336,6 +385,14 @@ export default function Users() {
                 <option value="user">User</option>
                 <option value="admin">Admin</option>
               </select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Designation</label>
+              <Input
+                value={editForm.designation}
+                onChange={(e) => setEditForm((prev) => ({ ...prev, designation: e.target.value }))}
+                placeholder="e.g. Project Manager"
+              />
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium">New Password (Optional)</label>

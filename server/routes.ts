@@ -1109,6 +1109,7 @@ async function seedDatabase() {
       const admin = await storage.createUser({
         name: "Admin User",
         email: "admin@example.com",
+        designation: "Administrator",
         password: "password",
         role: "admin"
       });

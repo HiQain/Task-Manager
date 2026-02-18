@@ -75,6 +75,7 @@ export const api = {
       input: z.object({
         name: z.string().min(1).optional(),
         email: z.string().email().optional(),
+        designation: z.string().max(120).optional(),
         password: z.string().min(6, "Password must be at least 6 characters").optional(),
         role: z.enum(["user", "admin"]).optional(),
       }),

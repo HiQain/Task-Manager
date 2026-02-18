@@ -16,6 +16,10 @@ export default function Profile() {
     .slice(0, 2)
     .toUpperCase();
 
+  const designationLabel = user.role === "admin"
+    ? "Admin"
+    : ((user.designation || "").trim() || "Team Member");
+
   return (
     <div className="max-w-2xl">
       <Card className="shadow-sm">
@@ -33,12 +37,16 @@ export default function Profile() {
             </div>
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-4 sm:grid-cols-3">
             <div className="rounded-lg border p-4">
               <p className="text-xs text-muted-foreground mb-1">Role</p>
               <Badge variant={user.role === "admin" ? "default" : "secondary"} className="capitalize">
                 {user.role}
               </Badge>
+            </div>
+            <div className="rounded-lg border p-4">
+              <p className="text-xs text-muted-foreground mb-1">Designation</p>
+              <p className="text-sm font-medium">{designationLabel}</p>
             </div>
             <div className="rounded-lg border p-4">
               <p className="text-xs text-muted-foreground mb-1">Joined</p>

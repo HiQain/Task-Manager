@@ -14,6 +14,7 @@ export const users = mysqlTable("users", {
   id: int("id").autoincrement().primaryKey(),
   name: varchar("name", { length: 255 }).notNull(),
   email: varchar("email", { length: 255 }).notNull().unique(),
+  designation: varchar("designation", { length: 120 }).notNull().default(""),
   password: varchar("password", { length: 255 })
     .notNull()
     .default("5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8"),
@@ -90,6 +91,7 @@ export const notifications = mysqlTable("notifications", {
 export const insertUserSchema = z.object({
   name: z.string().min(1),
   email: z.string().email(),
+  designation: z.string().trim().min(1, "Designation is required").max(120),
   password: z.string().min(6, "Password must be at least 6 characters"),
   role: z.enum(["user", "admin"]).default("user"),
 });
