@@ -12,6 +12,7 @@ import NotFound from "@/pages/not-found";
 import Login from "@/pages/Login";
 import { Button } from "@/components/ui/button";
 import { Menu } from "lucide-react";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 
 // Pages
 import Overview from "@/pages/Overview";
@@ -21,6 +22,7 @@ import Users from "@/pages/Users";
 import AdminConsole from "@/pages/AdminConsole";
 import Chat from "@/pages/Chat";
 import Notifications from "@/pages/Notifications";
+import Profile from "@/pages/Profile";
 
 function Router() {
   const { user } = useAuth();
@@ -65,6 +67,12 @@ function Router() {
         </ProtectedRoute>
       </Route>
 
+      <Route path="/profile">
+        <ProtectedRoute>
+          <Profile />
+        </ProtectedRoute>
+      </Route>
+
       <Route path="/admin">
         <ProtectedRoute requiredRole="admin">
           <AdminConsole />
@@ -80,7 +88,7 @@ function Layout({ children }: { children: React.ReactNode }) {
   const { user, logout } = useAuth();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
-  const [location] = useLocation();
+  const [location, setLocation] = useLocation();
 
   const getPageTitle = (path: string) => {
     switch (path) {
@@ -90,6 +98,7 @@ function Layout({ children }: { children: React.ReactNode }) {
       case "/users": return "Team Management";
       case "/chat": return "Team Chat";
       case "/notifications": return "Notifications";
+      case "/profile": return "Profile";
       default: return "";
     }
   };
@@ -98,6 +107,13 @@ function Layout({ children }: { children: React.ReactNode }) {
   if (!user) {
     return <>{children}</>;
   }
+
+  const userInitials = user.name
+    .split(" ")
+    .map((part) => part.charAt(0))
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
 
   return (
     <div className="min-h-screen bg-background font-sans flex">
@@ -126,10 +142,19 @@ function Layout({ children }: { children: React.ReactNode }) {
           </div>
 
           <div className="flex items-center justify-between md:justify-end gap-3 md:gap-4">
-            <div className="text-left md:text-right min-w-0">
-              <p className="text-sm font-medium text-foreground truncate">{user.name}</p>
-              <p className="text-xs text-muted-foreground capitalize">{user.role}</p>
-            </div>
+            <button
+              type="button"
+              onClick={() => setLocation("/profile")}
+              className="flex items-center gap-2 text-left md:text-right min-w-0 rounded-md px-2 py-1 hover:bg-muted transition-colors"
+            >
+              <Avatar className="h-8 w-8">
+                <AvatarFallback className="text-xs font-semibold">{userInitials}</AvatarFallback>
+              </Avatar>
+              <div>
+                <p className="text-sm font-medium text-foreground truncate">{user.name}</p>
+                <p className="text-xs text-muted-foreground capitalize">{user.role}</p>
+              </div>
+            </button>
             <button
               onClick={() => {
                 logout();
