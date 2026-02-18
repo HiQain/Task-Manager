@@ -40,11 +40,12 @@ function isPdfAttachment(attachment: { name: string; type: string }) {
   return attachment.type === "application/pdf" || attachment.name.toLowerCase().endsWith(".pdf");
 }
 
-function isDeletedChatUser(userLike: { email?: string | null; name?: string | null } | null | undefined): boolean {
+function isDeletedChatUser(userLike: { email?: string | null; name?: string | null; role?: string | null } | null | undefined): boolean {
   if (!userLike) return false;
   const email = (userLike.email || "").toLowerCase();
   const name = (userLike.name || "").toLowerCase();
-  return email.endsWith("@deleted.local") || name.includes("deleted user");
+  const role = (userLike.role || "").toLowerCase();
+  return role === "deleted" || email.endsWith("@deleted.local") || name.includes("deleted user");
 }
 
 function formatAttachmentSize(bytes?: number) {

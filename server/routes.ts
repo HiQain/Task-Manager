@@ -67,7 +67,9 @@ function isAdminUser(user: any): boolean {
 
 function isDeletedUser(user: any): boolean {
   const email = String(user?.email || "").toLowerCase();
-  return email.endsWith("@deleted.local");
+  const password = String(user?.password || "");
+  const role = String(user?.role || "").toLowerCase();
+  return role === "deleted" || email.endsWith("@deleted.local") || password.startsWith("__deleted__:");
 }
 
 function getTaskParticipantIds(task: any): number[] {

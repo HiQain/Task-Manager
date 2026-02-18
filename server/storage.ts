@@ -122,11 +122,36 @@ function buildDeletedUserEmail(id: number): string {
   return `deleted+${id}@deleted.local`;
 }
 
+const DELETED_PASSWORD_PREFIX = "__deleted__:";
+
+function buildDeletedPassword(email: string): string {
+  const encodedEmail = Buffer.from(email.toLowerCase(), "utf8").toString("base64url");
+  const randomSuffix = crypto.randomBytes(16).toString("hex");
+  return `${DELETED_PASSWORD_PREFIX}${encodedEmail}:${randomSuffix}`;
+}
+
+function getDeletedOriginalEmail(password: string | null | undefined): string | null {
+  if (!password || !password.startsWith(DELETED_PASSWORD_PREFIX)) return null;
+  const payload = password.slice(DELETED_PASSWORD_PREFIX.length);
+  const encodedEmail = payload.split(":")[0] || "";
+  if (!encodedEmail) return null;
+  try {
+    return Buffer.from(encodedEmail, "base64url").toString("utf8").toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+function isDeletedUserRecord(record: Pick<User, "email" | "password">): boolean {
+  const role = String((record as any)?.role || "").toLowerCase();
+  return role === "deleted" || isDeletedUserEmail(record.email) || !!getDeletedOriginalEmail(record.password);
+}
+
 export class DatabaseStorage implements IStorage {
   // Users Implementation
   async getUsers(): Promise<User[]> {
     const rows = await db.select().from(users);
-    return rows.filter((row) => !isDeletedUserEmail(row.email));
+    return rows.filter((row) => !isDeletedUserRecord(row));
   }
 
   async getUser(id: number): Promise<User | undefined> {
@@ -140,6 +165,41 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createUser(insertUser: InsertUser): Promise<User> {
+    const normalizedEmail = insertUser.email.toLowerCase();
+    const allUsers = await db.select().from(users);
+
+    const activeWithSameEmail = allUsers.find(
+      (u) => u.email.toLowerCase() === normalizedEmail && !isDeletedUserRecord(u),
+    );
+    if (activeWithSameEmail) {
+      throw new Error("Email already exists");
+    }
+
+    const deletedWithSameEmail = allUsers.find((u) => {
+      if (!isDeletedUserRecord(u)) return false;
+      const directEmailMatch = u.email.toLowerCase() === normalizedEmail;
+      const deletedOriginalEmail = getDeletedOriginalEmail(u.password);
+      return directEmailMatch || deletedOriginalEmail === normalizedEmail;
+    });
+
+    if (deletedWithSameEmail) {
+      await db
+        .update(users)
+        .set({
+          name: insertUser.name,
+          email: insertUser.email,
+          password: hashPassword(insertUser.password),
+          role: insertUser.role,
+        })
+        .where(eq(users.id, deletedWithSameEmail.id));
+
+      const [restoredUser] = await db.select().from(users).where(eq(users.id, deletedWithSameEmail.id));
+      if (!restoredUser) {
+        throw new Error("Failed to restore user");
+      }
+      return restoredUser;
+    }
+
     const userData = {
       ...insertUser,
       password: hashPassword(insertUser.password),
@@ -178,9 +238,10 @@ export class DatabaseStorage implements IStorage {
       .set({
         // Keep original display name so old conversations still show who it was.
         name: existing.name,
-        email: buildDeletedUserEmail(id),
-        password: crypto.randomBytes(32).toString("hex"),
-        role: "user",
+        // Keep original email so re-create with same email restores this exact user.
+        email: existing.email,
+        password: buildDeletedPassword(existing.email),
+        role: "deleted",
       })
       .where(eq(users.id, id));
   }
@@ -315,7 +376,7 @@ export class DatabaseStorage implements IStorage {
     incoming.forEach((row) => chattedUserIds.add(row.fromUserId));
     outgoing.forEach((row) => chattedUserIds.add(row.toUserId));
 
-    return allUsers.filter((u) => !isDeletedUserEmail(u.email) || chattedUserIds.has(u.id));
+    return allUsers.filter((u) => !isDeletedUserRecord(u) || chattedUserIds.has(u.id));
   }
 
   async getMessagesBetweenUsers(userId: number, otherUserId: number): Promise<Message[]> {
