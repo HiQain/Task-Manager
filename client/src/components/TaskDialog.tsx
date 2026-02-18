@@ -110,16 +110,7 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
 
   const displayedAssigneeUsers = useMemo(() => {
     if (assigneeSearch.trim()) return filteredAssigneeUsers;
-
-    const selectedUsers = assigneeUsers.filter((u) => assignedToIds.includes(u.id));
-    const topUsers = assigneeUsers.filter((u) => !assignedToIds.includes(u.id)).slice(0, 5);
-    const combined = [...selectedUsers, ...topUsers];
-    const seen = new Set<number>();
-    return combined.filter((u) => {
-      if (seen.has(u.id)) return false;
-      seen.add(u.id);
-      return true;
-    });
+    return assigneeUsers.filter((u) => assignedToIds.includes(u.id));
   }, [assigneeSearch, filteredAssigneeUsers, assigneeUsers, assignedToIds]);
 
   useEffect(() => {
@@ -321,6 +312,7 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
                                       shouldDirty: true,
                                       shouldTouch: true,
                                     });
+                                    setAssigneeSearch("");
                                   }}
                                   className="h-4 w-4"
                                 />
@@ -330,15 +322,10 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
                           })}
                           {displayedAssigneeUsers.length === 0 && (
                             <p className="text-xs text-muted-foreground">
-                              {assigneeSearch.trim() ? "No user found." : "No users available."}
+                              {assigneeSearch.trim() ? "No user found." : "No selected users yet. Search to add users."}
                             </p>
                           )}
                         </div>
-                        {!assigneeSearch.trim() && filteredAssigneeUsers.length > 5 && (
-                          <p className="text-[11px] text-muted-foreground">
-                            Selected users stay visible. Other users are limited to first 5; use search to find more.
-                          </p>
-                        )}
                         <FormMessage />
                       </FormItem>
                     )}
