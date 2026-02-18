@@ -709,6 +709,20 @@ export async function registerRoutes(
         ).values(),
       );
       await storage.replaceStorageProjectAccesses(project.id, members);
+      if (members.length > 0) {
+        await Promise.all(
+          members.map((member) =>
+            emitNotification([member.userId], {
+              title: "Storage Access Granted",
+              description: `${req.user.name} gave you ${member.access} access to project "${project.name}".`,
+              actorUserId: req.user.id,
+              type: "storage_access_granted",
+              entityType: "storage_project",
+              entityId: project.id,
+            }),
+          ),
+        );
+      }
       res.status(201).json(project);
     } catch (err) {
       if (err instanceof z.ZodError) {
@@ -843,6 +857,8 @@ export async function registerRoutes(
       const storageEnabledUserIds = new Set(
         allUsers.filter((u) => !!u.allowStorage).map((u) => u.id),
       );
+      const previousAccessRows = await storage.getStorageProjectAccesses(project.id);
+      const previousByUserId = new Map(previousAccessRows.map((row) => [row.userId, row.access]));
       const members: Array<{ userId: number; access: "view" | "edit" }> = Array.from(
         new Map(
           (input.members || [])
@@ -855,6 +871,24 @@ export async function registerRoutes(
         ).values(),
       );
       await storage.replaceStorageProjectAccesses(project.id, members);
+      const newlyGranted = members.filter((member) => {
+        const prevAccess = previousByUserId.get(member.userId);
+        return !prevAccess || prevAccess !== member.access;
+      });
+      if (newlyGranted.length > 0) {
+        await Promise.all(
+          newlyGranted.map((member) =>
+            emitNotification([member.userId], {
+              title: "Storage Access Updated",
+              description: `${req.user.name} gave you ${member.access} access to project "${project.name}".`,
+              actorUserId: req.user.id,
+              type: "storage_access_granted",
+              entityType: "storage_project",
+              entityId: project.id,
+            }),
+          ),
+        );
+      }
       res.json({ success: true });
     } catch (err) {
       if (err instanceof z.ZodError) {
