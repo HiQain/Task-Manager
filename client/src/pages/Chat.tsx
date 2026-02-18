@@ -1032,6 +1032,9 @@ export default function Chat() {
           {filteredUsers.map((u) => {
             const isActive = u.id === activeUserId;
             const unread = unreadCounts?.byUser?.[String(u.id)] || 0;
+            const userPresence = presenceByUserId[u.id];
+            const isOnline = !!userPresence?.isOnline;
+            const userStatus = isOnline ? "Online" : formatLastSeen(userPresence?.lastSeenAt);
             return (
               <button
                 key={u.id}
@@ -1050,7 +1053,10 @@ export default function Chat() {
                 </Avatar>
                 <div className="min-w-0">
                   <p className="text-sm font-medium truncate">{u.name}</p>
-                  <p className="text-[11px] text-muted-foreground capitalize">{u.role}</p>
+                  <div className="flex items-center gap-1.5">
+                    <span className={`h-2 w-2 rounded-full ${isOnline ? "bg-green-500" : "bg-slate-400"}`} />
+                    <p className="text-[11px] text-muted-foreground">{userStatus}</p>
+                  </div>
                 </div>
                 {unread > 0 && (
                   <span className="ml-auto min-w-5 h-5 px-1 rounded-full bg-destructive text-destructive-foreground text-[10px] font-semibold flex items-center justify-center">
