@@ -40,7 +40,7 @@ export const messages = mysqlTable("messages", {
   id: int("id").autoincrement().primaryKey(),
   fromUserId: int("from_user_id").notNull().references(() => users.id),
   toUserId: int("to_user_id").notNull().references(() => users.id),
-  content: text("content").notNull(),
+  content: longtext("content").notNull(),
   readAt: timestamp("read_at", { mode: "date" }),
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
 });
@@ -49,7 +49,7 @@ export const taskGroupMessages = mysqlTable("task_group_messages", {
   id: int("id").autoincrement().primaryKey(),
   taskId: int("task_id").notNull().references(() => tasks.id),
   fromUserId: int("from_user_id").notNull().references(() => users.id),
-  content: text("content").notNull(),
+  content: longtext("content").notNull(),
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
 });
 
@@ -119,14 +119,14 @@ export const insertTaskSchema = z.object({
 export const insertMessageSchema = z.object({
   fromUserId: z.number().int().optional(),
   toUserId: z.number().int(),
-  content: z.string().min(1, "Message is required").max(60000, "Message is too long"),
+  content: z.string().min(1, "Message is required").max(900000, "Message is too long"),
   readAt: z.date().nullable().optional(),
 });
 
 export const insertTaskGroupMessageSchema = z.object({
   taskId: z.number().int(),
   fromUserId: z.number().int().optional(),
-  content: z.string().min(1, "Message is required").max(60000, "Message is too long"),
+  content: z.string().min(1, "Message is required").max(900000, "Message is too long"),
 });
 
 export const insertTaskChatGroupSchema = z.object({

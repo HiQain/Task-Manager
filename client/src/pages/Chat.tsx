@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ChevronLeft, Download, Loader2, Mic, MicOff, Paperclip, Phone, PhoneOff, Search, Send, X } from "lucide-react";
+import { ChevronLeft, Download, Eye, FileText, Loader2, Mic, MicOff, Paperclip, Phone, PhoneOff, Search, Send, X } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useMarkChatRead, useMarkTaskGroupRead, useMessages, useSendMessage, useSendTaskGroupMessage, useTaskGroupMessages, useTaskGroupUnreadCounts, useTaskGroups, useUnreadCounts } from "@/hooks/use-chat";
 import { useUsers } from "@/hooks/use-users";
@@ -23,8 +23,19 @@ type PreviewAttachment = Pick<ChatAttachment, "name" | "data" | "type">;
 const CHAT_ATTACHMENT_PREFIX = "__CHAT_ATTACHMENTS_V1__:";
 const PENDING_CALL_STORAGE_KEY = "pending_incoming_call_v1";
 const MAX_CHAT_ATTACHMENTS = 2;
-const MAX_CHAT_ATTACHMENT_BYTES = 20 * 1024;
-const MAX_CHAT_MESSAGE_CHARS = 58000;
+const MAX_CHAT_ATTACHMENT_BYTES = 220 * 1024;
+const MAX_CHAT_MESSAGE_CHARS = 850000;
+
+function isPdfAttachment(attachment: { name: string; type: string }) {
+  return attachment.type === "application/pdf" || attachment.name.toLowerCase().endsWith(".pdf");
+}
+
+function formatAttachmentSize(bytes?: number) {
+  if (!bytes || !Number.isFinite(bytes)) return null;
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 function decodeMessagePayload(rawContent: unknown): { text: string; attachments: ChatAttachment[] } {
   const content = typeof rawContent === "string" ? rawContent : "";
@@ -1255,7 +1266,7 @@ export default function Chat() {
                     {parsedMessage.attachments.length > 0 && (
                       <div className="mt-2 space-y-2">
                         {parsedMessage.attachments.map((attachment, index) => (
-                          <div key={`${msg.id}-attachment-${index}`} className="rounded-md border border-border/60 bg-background/60 p-2">
+                          <div key={`${msg.id}-attachment-${index}`} className="rounded-lg border border-border/70 bg-background/70 p-2.5 shadow-sm">
                             {attachment.type.startsWith("image/") ? (
                               <button
                                 type="button"
@@ -1274,6 +1285,46 @@ export default function Chat() {
                                   className="max-h-40 w-auto rounded border border-border/60"
                                 />
                               </button>
+                            ) : isPdfAttachment(attachment) ? (
+                              <div className="rounded-md border border-border/60 bg-muted/20 p-2.5">
+                                <div className="flex items-start gap-2.5">
+                                  <div className="mt-0.5 h-8 w-8 shrink-0 rounded-md bg-primary/10 text-primary flex items-center justify-center">
+                                    <FileText className="h-4 w-4" />
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                    <p className="text-xs font-medium break-all leading-5">{attachment.name}</p>
+                                    {formatAttachmentSize(attachment.size) && (
+                                      <p className="text-[11px] text-muted-foreground mt-0.5">
+                                        {formatAttachmentSize(attachment.size)}
+                                      </p>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="mt-2.5 flex items-center gap-2">
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-7 px-2.5 text-[11px]"
+                                    onClick={() =>
+                                      setPreviewAttachment({
+                                        name: attachment.name,
+                                        data: attachment.data,
+                                        type: attachment.type || "application/pdf",
+                                      })
+                                    }
+                                  >
+                                    <Eye className="w-3.5 h-3.5 mr-1" />
+                                    View
+                                  </Button>
+                                  <Button asChild variant="ghost" size="sm" className="h-7 px-2.5 text-[11px]">
+                                    <a href={attachment.data} download={attachment.name}>
+                                      <Download className="w-3.5 h-3.5 mr-1" />
+                                      Download
+                                    </a>
+                                  </Button>
+                                </div>
+                              </div>
                             ) : (
                               <a
                                 href={attachment.data}
@@ -1390,6 +1441,14 @@ export default function Chat() {
                     src={previewAttachment.data}
                     alt={previewAttachment.name}
                     className="max-h-[65vh] w-full object-contain rounded"
+                  />
+                </div>
+              ) : isPdfAttachment(previewAttachment) ? (
+                <div className="rounded-md border border-border/60 bg-muted/20 overflow-hidden">
+                  <iframe
+                    src={previewAttachment.data}
+                    title={previewAttachment.name}
+                    className="h-[65vh] w-full"
                   />
                 </div>
               ) : (
