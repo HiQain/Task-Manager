@@ -18,6 +18,7 @@ export function useCreateUser() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [api.users.list.path] });
+      queryClient.invalidateQueries({ queryKey: [api.chats.users.path] });
     },
   });
 }
@@ -30,6 +31,9 @@ export function useDeleteUser() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [api.users.list.path] });
+      queryClient.invalidateQueries({ queryKey: [api.chats.users.path] });
+      queryClient.invalidateQueries({ queryKey: [api.chats.list.path] });
+      queryClient.invalidateQueries({ queryKey: [api.chats.unread.path] });
     },
   });
 }

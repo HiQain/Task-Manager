@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ChevronLeft, Download, Eye, FileText, Loader2, Mic, MicOff, Paperclip, Phone, PhoneOff, Search, Send, X } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
-import { useMarkChatRead, useMarkTaskGroupRead, useMessages, useSendMessage, useSendTaskGroupMessage, useTaskGroupMessages, useTaskGroupUnreadCounts, useTaskGroups, useUnreadCounts } from "@/hooks/use-chat";
+import { useChatUsers, useMarkChatRead, useMarkTaskGroupRead, useMessages, useSendMessage, useSendTaskGroupMessage, useTaskGroupMessages, useTaskGroupUnreadCounts, useTaskGroups, useUnreadCounts } from "@/hooks/use-chat";
 import { useUsers } from "@/hooks/use-users";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
@@ -38,6 +38,13 @@ const MAX_CHAT_MESSAGE_CHARS = 850000;
 
 function isPdfAttachment(attachment: { name: string; type: string }) {
   return attachment.type === "application/pdf" || attachment.name.toLowerCase().endsWith(".pdf");
+}
+
+function isDeletedChatUser(userLike: { email?: string | null; name?: string | null } | null | undefined): boolean {
+  if (!userLike) return false;
+  const email = (userLike.email || "").toLowerCase();
+  const name = (userLike.name || "").toLowerCase();
+  return email.endsWith("@deleted.local") || name.includes("deleted user");
 }
 
 function formatAttachmentSize(bytes?: number) {
@@ -174,7 +181,8 @@ export default function Chat() {
   const [location, setLocation] = useLocation();
   const { user } = useAuth();
   const { toast } = useToast();
-  const { data: users, isLoading: isUsersLoading } = useUsers();
+  const { data: users } = useUsers();
+  const { data: chatUsers, isLoading: isChatUsersLoading } = useChatUsers();
   const { data: tasks } = useTasks();
   const { data: unreadCounts } = useUnreadCounts();
   const { data: taskGroupUnreadCounts } = useTaskGroupUnreadCounts();
@@ -218,12 +226,23 @@ export default function Chat() {
   const typingStopTimeoutRef = useRef<number | null>(null);
   const typingTargetUserIdRef = useRef<number | undefined>(undefined);
   const sentTypingRef = useRef(false);
-  const usersRef = useRef(users);
+  const usersRef = useRef<Array<{ id: number; name: string }>>([]);
   const duplicateChoiceResolverRef = useRef<((choice: "replace" | "duplicate") => void) | null>(null);
 
+  const allKnownUsers = useMemo(() => {
+    const list = [...(users || []), ...(chatUsers || []), ...(user ? [user] : [])];
+    const map = new Map<number, (typeof list)[number]>();
+    list.forEach((entry) => {
+      if (entry?.id && !map.has(entry.id)) {
+        map.set(entry.id, entry);
+      }
+    });
+    return Array.from(map.values());
+  }, [users, chatUsers, user]);
+
   useEffect(() => {
-    usersRef.current = users;
-  }, [users]);
+    usersRef.current = allKnownUsers.map((u) => ({ id: u.id, name: u.name }));
+  }, [allKnownUsers]);
 
   const resolveDuplicateChoice = (choice: "replace" | "duplicate") => {
     if (duplicateChoiceResolverRef.current) {
@@ -250,8 +269,8 @@ export default function Chat() {
   }, []);
 
   const teamMembers = useMemo(
-    () => (users || []).filter((u) => u.id !== user?.id),
-    [users, user?.id]
+    () => (chatUsers || []).filter((u) => u.id !== user?.id),
+    [chatUsers, user?.id]
   );
 
   const filteredUsers = useMemo(() => {
@@ -333,8 +352,8 @@ export default function Chat() {
     return getTaskMemberIds(activeTask);
   }, [activeTask]);
   const activeTaskParticipants = useMemo(
-    () => (users || []).filter((u) => activeTaskParticipantIds.includes(u.id)),
-    [users, activeTaskParticipantIds]
+    () => allKnownUsers.filter((u) => activeTaskParticipantIds.includes(u.id)),
+    [allKnownUsers, activeTaskParticipantIds]
   );
   const incomingCallFromUser = useMemo(
     () => teamMembers.find((u) => u.id === incomingCallFromUserId),
@@ -918,6 +937,14 @@ export default function Chat() {
   const handleSend = async () => {
     const content = draft.trim();
     if (!content && draftAttachments.length === 0) return;
+    if (!isGroupMode && isDeletedChatUser(activeUser)) {
+      toast({
+        title: "User deleted",
+        description: "You cannot send new messages to a deleted user.",
+        variant: "destructive",
+      });
+      return;
+    }
     try {
       const encodedContent = encodeMessagePayload(content, draftAttachments);
       if (encodedContent.length > MAX_CHAT_MESSAGE_CHARS) {
@@ -1076,12 +1103,15 @@ export default function Chat() {
 
   const activePresence = activeUserId ? presenceByUserId[activeUserId] : undefined;
   const isActiveUserOnline = !!activePresence?.isOnline;
+  const isActiveUserDeleted = isDeletedChatUser(activeUser);
   const isActiveUserTyping = activeUserId ? !!typingByUserId[activeUserId] : false;
   const activeUserSubtitle = isActiveUserTyping
     ? "typing..."
-    : (activePresence?.isOnline ? "Online" : formatLastSeen(activePresence?.lastSeenAt));
+    : isActiveUserDeleted
+      ? "User deleted"
+      : (activePresence?.isOnline ? "Online" : formatLastSeen(activePresence?.lastSeenAt));
 
-  if (isUsersLoading) {
+  if (isChatUsersLoading) {
     return (
       <div className="h-full flex items-center justify-center">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
@@ -1151,9 +1181,10 @@ export default function Chat() {
           {filteredUsers.map((u) => {
             const isActive = u.id === activeUserId;
             const unread = unreadCounts?.byUser?.[String(u.id)] || 0;
+            const isDeletedUser = isDeletedChatUser(u);
             const userPresence = presenceByUserId[u.id];
             const isOnline = !!userPresence?.isOnline;
-            const userStatus = isOnline ? "Online" : formatLastSeen(userPresence?.lastSeenAt);
+            const userStatus = isDeletedUser ? "User deleted" : (isOnline ? "Online" : formatLastSeen(userPresence?.lastSeenAt));
             return (
               <button
                 key={u.id}
@@ -1173,7 +1204,7 @@ export default function Chat() {
                 <div className="min-w-0">
                   <p className="text-sm font-medium truncate">{u.name}</p>
                   <div className="flex items-center gap-1.5">
-                    <span className={`h-2 w-2 rounded-full ${isOnline ? "bg-green-500" : "bg-slate-400"}`} />
+                    <span className={`h-2 w-2 rounded-full ${isDeletedUser ? "bg-amber-500" : (isOnline ? "bg-green-500" : "bg-slate-400")}`} />
                     <p className="text-[11px] text-muted-foreground">{userStatus}</p>
                   </div>
                 </div>
@@ -1229,7 +1260,7 @@ export default function Chat() {
                   type="button"
                   variant="outline"
                   className="h-9"
-                  disabled={!activeUserId || !isActiveUserOnline || isCalling || isInCall}
+                  disabled={!activeUserId || !isActiveUserOnline || isActiveUserDeleted || isCalling || isInCall}
                   onClick={() => void startCall()}
                 >
                   <Phone className="w-4 h-4 sm:mr-2" />
@@ -1285,6 +1316,11 @@ export default function Chat() {
                 <span className="text-xs text-muted-foreground">{isMuted ? "Mic muted" : "Mic on"}</span>
               </div>
             )}
+            {isActiveUserDeleted && (
+              <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                This user has been deleted. You can view old messages only.
+              </div>
+            )}
           </div>
         )}
 
@@ -1302,7 +1338,7 @@ export default function Chat() {
           ) : displayedMessages.length > 0 ? (
             displayedMessages.map((msg) => {
               const mine = msg.fromUserId === user?.id;
-              const sender = (users || []).find((u) => u.id === msg.fromUserId);
+              const sender = allKnownUsers.find((u) => u.id === msg.fromUserId);
               const parsedMessage = decodeMessagePayload(msg.content);
               return (
                 <div key={msg.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
@@ -1462,7 +1498,7 @@ export default function Chat() {
               type="button"
               variant="outline"
               className="h-11 px-3"
-              disabled={!showConversationPanel || sendPending}
+              disabled={!showConversationPanel || isActiveUserDeleted || sendPending}
               onClick={() => attachmentInputRef.current?.click()}
             >
               <Paperclip className="w-4 h-4" />
@@ -1470,13 +1506,13 @@ export default function Chat() {
             <Input
               value={draft}
               onChange={(e) => handleDraftChange(e.target.value)}
-              placeholder={showConversationPanel ? "Type a message..." : "Select user or task group first"}
-              disabled={!showConversationPanel || sendPending}
+              placeholder={showConversationPanel ? (isActiveUserDeleted ? "This user is deleted (read-only chat)" : "Type a message...") : "Select user or task group first"}
+              disabled={!showConversationPanel || isActiveUserDeleted || sendPending}
               className="h-11"
             />
             <Button
               type="submit"
-              disabled={!showConversationPanel || (!draft.trim() && draftAttachments.length === 0) || sendPending}
+              disabled={!showConversationPanel || isActiveUserDeleted || (!draft.trim() && draftAttachments.length === 0) || sendPending}
               className="h-11 px-4"
             >
               {sendPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}

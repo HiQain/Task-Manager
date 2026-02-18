@@ -113,10 +113,20 @@ function normalizeAssignedToIds(rawIds: unknown, fallbackId?: unknown): number[]
   return [];
 }
 
+function isDeletedUserEmail(email: string | null | undefined): boolean {
+  if (!email) return false;
+  return email.toLowerCase().endsWith("@deleted.local");
+}
+
+function buildDeletedUserEmail(id: number): string {
+  return `deleted+${id}@deleted.local`;
+}
+
 export class DatabaseStorage implements IStorage {
   // Users Implementation
   async getUsers(): Promise<User[]> {
-    return await db.select().from(users);
+    const rows = await db.select().from(users);
+    return rows.filter((row) => !isDeletedUserEmail(row.email));
   }
 
   async getUser(id: number): Promise<User | undefined> {
@@ -160,7 +170,19 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteUser(id: number): Promise<void> {
-    await db.delete(users).where(eq(users.id, id));
+    const [existing] = await db.select().from(users).where(eq(users.id, id));
+    if (!existing) return;
+
+    await db
+      .update(users)
+      .set({
+        // Keep original display name so old conversations still show who it was.
+        name: existing.name,
+        email: buildDeletedUserEmail(id),
+        password: crypto.randomBytes(32).toString("hex"),
+        role: "user",
+      })
+      .where(eq(users.id, id));
   }
 
   async clearAllUsers(): Promise<void> {
@@ -286,7 +308,14 @@ export class DatabaseStorage implements IStorage {
 
   // Chat Implementation
   async getChatUsers(currentUserId: number): Promise<User[]> {
-    return await db.select().from(users).where(ne(users.id, currentUserId));
+    const allUsers = await db.select().from(users).where(ne(users.id, currentUserId));
+    const incoming = await db.select().from(messages).where(eq(messages.toUserId, currentUserId));
+    const outgoing = await db.select().from(messages).where(eq(messages.fromUserId, currentUserId));
+    const chattedUserIds = new Set<number>();
+    incoming.forEach((row) => chattedUserIds.add(row.fromUserId));
+    outgoing.forEach((row) => chattedUserIds.add(row.toUserId));
+
+    return allUsers.filter((u) => !isDeletedUserEmail(u.email) || chattedUserIds.has(u.id));
   }
 
   async getMessagesBetweenUsers(userId: number, otherUserId: number): Promise<Message[]> {

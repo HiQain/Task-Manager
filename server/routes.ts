@@ -65,6 +65,11 @@ function isAdminUser(user: any): boolean {
   return String(user?.role || "").toLowerCase() === "admin";
 }
 
+function isDeletedUser(user: any): boolean {
+  const email = String(user?.email || "").toLowerCase();
+  return email.endsWith("@deleted.local");
+}
+
 function getTaskParticipantIds(task: any): number[] {
   const ids = new Set<number>();
   if (typeof task?.createdById === "number" && Number.isFinite(task.createdById)) {
@@ -404,6 +409,11 @@ export async function registerRoutes(
   app.use((req, res, next) => {
     if (req.session.userId) {
       storage.getUser(req.session.userId).then((user) => {
+        if (user && isDeletedUser(user)) {
+          req.session.userId = undefined;
+          req.user = undefined;
+          return next();
+        }
         req.user = user;
         next();
       });
@@ -422,7 +432,7 @@ export async function registerRoutes(
       const input = api.auth.login.input.parse(req.body);
       const user = await storage.getUserByEmail(input.email);
 
-      if (!user || !verifyPassword(input.password, user.password)) {
+      if (!user || isDeletedUser(user) || !verifyPassword(input.password, user.password)) {
         return res.status(401).json({ message: "Invalid email or password" });
       }
 
@@ -514,7 +524,20 @@ export async function registerRoutes(
   });
 
   app.delete(api.users.delete.path, async (req, res) => {
+    if (!req.user || !isAdminUser(req.user)) {
+      return res.status(403).json({ message: "Only admins can delete users" });
+    }
     const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ message: "Invalid user id" });
+    }
+    if (id === req.user.id) {
+      return res.status(400).json({ message: "You cannot delete your own account" });
+    }
+    const existing = await storage.getUser(id);
+    if (!existing) {
+      return res.status(404).json({ message: "User not found" });
+    }
     await storage.deleteUser(id);
     res.status(204).send();
   });
@@ -817,6 +840,9 @@ export async function registerRoutes(
       const recipient = await storage.getUser(input.toUserId);
       if (!recipient) {
         return res.status(404).json({ message: "User not found" });
+      }
+      if (isDeletedUser(recipient)) {
+        return res.status(400).json({ message: "Cannot send message to deleted user" });
       }
       const shouldMarkReadImmediately = isUserViewingChatWith(input.toUserId, req.user.id);
       const message = await storage.createMessage({
