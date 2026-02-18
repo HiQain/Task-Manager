@@ -1,12 +1,13 @@
-import { useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent, type Dispatch, type SetStateAction } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
+import { useUsers } from "@/hooks/use-users";
 import { api, buildUrl } from "@shared/routes";
 import { apiRequest } from "@/lib/queryClient";
-import { FileImage, FileText, Files, FolderPlus, Upload, Eye, Download, Trash2, X } from "lucide-react";
+import { FileImage, FileText, Files, FolderPlus, Upload, Eye, Download, Trash2, X, ShieldCheck } from "lucide-react";
 
 type StoredFile = {
   id: number;
@@ -18,12 +19,23 @@ type StoredFile = {
   dataUrl: string;
 };
 
+type ProjectMember = {
+  userId: number;
+  name: string;
+  access: "view" | "edit";
+};
+
 type StorageProject = {
   id: number;
   name: string;
   createdAt: string | Date | null;
   files: StoredFile[];
+  canEdit: boolean;
+  canDelete: boolean;
+  members: ProjectMember[];
 };
+
+type AccessMap = Record<number, "view" | "edit" | null>;
 
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
@@ -53,18 +65,30 @@ function readFileAsDataUrl(file: File): Promise<string> {
 export default function Storage() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const { data: users } = useUsers();
 
   const [projects, setProjects] = useState<StorageProject[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
-  const [newProjectName, setNewProjectName] = useState("");
   const [isUploading, setIsUploading] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
-  const [projectNameError, setProjectNameError] = useState("");
   const [previewFile, setPreviewFile] = useState<StoredFile | null>(null);
   const [quotaBytes, setQuotaBytes] = useState<number>(1024 * 1024 * 1024);
   const [usedBytes, setUsedBytes] = useState<number>(0);
+  const [hasStorageAccess, setHasStorageAccess] = useState(true);
+
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [createProjectName, setCreateProjectName] = useState("");
+  const [createProjectError, setCreateProjectError] = useState("");
+  const [createAccessMap, setCreateAccessMap] = useState<AccessMap>({});
+
+  const [accessDialogOpen, setAccessDialogOpen] = useState(false);
+  const [manageAccessMap, setManageAccessMap] = useState<AccessMap>({});
 
   const selectedProject = projects.find((p) => p.id === selectedProjectId) || null;
+
+  const storageAllowedUsers = useMemo(() => {
+    return (users || []).filter((member) => !!member.allowStorage && member.id !== user?.id);
+  }, [users, user?.id]);
 
   const projectUsageById = useMemo(() => {
     return projects.reduce<Record<number, number>>((acc, project) => {
@@ -81,10 +105,18 @@ export default function Storage() {
         if (res.status === 401) {
           setProjects([]);
           setSelectedProjectId(null);
+          setHasStorageAccess(false);
+          return;
+        }
+        if (res.status === 403) {
+          setProjects([]);
+          setSelectedProjectId(null);
+          setHasStorageAccess(false);
           return;
         }
         throw new Error("Failed to load storage");
       }
+      setHasStorageAccess(true);
 
       const data = await res.json() as {
         projects: StorageProject[];
@@ -120,18 +152,33 @@ export default function Storage() {
     void loadStorage();
   }, [user?.id]);
 
+  const buildMembersPayload = (source: AccessMap) => {
+    return Object.entries(source)
+      .map(([userId, access]) => ({ userId: Number(userId), access }))
+      .filter((entry): entry is { userId: number; access: "view" | "edit" } =>
+        Number.isFinite(entry.userId) && (entry.access === "view" || entry.access === "edit"),
+      );
+  };
+
+  const openCreateProjectDialog = () => {
+    setCreateProjectName("");
+    setCreateProjectError("");
+    setCreateAccessMap({});
+    setCreateDialogOpen(true);
+  };
+
   const createProject = async () => {
-    const name = newProjectName.trim();
+    const name = createProjectName.trim();
     if (!name) {
-      setProjectNameError("Project name is required.");
+      setCreateProjectError("Project name is required.");
       return;
     }
 
     try {
-      const res = await apiRequest(api.storage.createProject.method, api.storage.createProject.path, { name });
+      const members = buildMembersPayload(createAccessMap);
+      const res = await apiRequest(api.storage.createProject.method, api.storage.createProject.path, { name, members });
       const created = await res.json() as { id: number };
-      setNewProjectName("");
-      setProjectNameError("");
+      setCreateDialogOpen(false);
       await loadStorage(created?.id ?? null);
     } catch (err: any) {
       toast({
@@ -142,9 +189,39 @@ export default function Storage() {
     }
   };
 
+  const openManageAccessDialog = () => {
+    if (!selectedProject) return;
+    const initialMap: AccessMap = {};
+    selectedProject.members.forEach((member) => {
+      initialMap[member.userId] = member.access;
+    });
+    setManageAccessMap(initialMap);
+    setAccessDialogOpen(true);
+  };
+
+  const saveManageAccess = async () => {
+    if (!selectedProject) return;
+    try {
+      const members = buildMembersPayload(manageAccessMap);
+      await apiRequest(
+        api.storage.updateAccess.method,
+        buildUrl(api.storage.updateAccess.path, { id: selectedProject.id }),
+        { members },
+      );
+      setAccessDialogOpen(false);
+      await loadStorage(selectedProject.id);
+    } catch {
+      toast({
+        title: "Access update failed",
+        description: "Could not update project access.",
+        variant: "destructive",
+      });
+    }
+  };
+
   const handleUpload = async (event: ChangeEvent<HTMLInputElement>) => {
     const fileList = event.target.files;
-    if (!fileList || !selectedProject) return;
+    if (!fileList || !selectedProject || !selectedProject.canEdit) return;
 
     setIsUploading(true);
     try {
@@ -201,7 +278,7 @@ export default function Storage() {
 
   const deleteProject = async (projectId: number) => {
     const project = projects.find((p) => p.id === projectId);
-    if (!project) return;
+    if (!project || !project.canDelete) return;
 
     const confirmed = window.confirm(`Delete project "${project.name}" and all its files?`);
     if (!confirmed) return;
@@ -219,7 +296,7 @@ export default function Storage() {
   };
 
   const deleteFile = async (fileId: number) => {
-    if (!selectedProject) return;
+    if (!selectedProject || !selectedProject.canEdit) return;
     const file = selectedProject.files.find((f) => f.id === fileId);
     if (!file) return;
 
@@ -285,9 +362,54 @@ export default function Storage() {
     );
   };
 
+  const renderAccessPicker = (
+    mapState: AccessMap,
+    setMapState: Dispatch<SetStateAction<AccessMap>>,
+  ) => (
+    <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+      {storageAllowedUsers.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No users with storage access found. Enable it from Team page.</p>
+      ) : (
+        storageAllowedUsers.map((member) => {
+          const selectedAccess = mapState[member.id] || null;
+          return (
+            <div key={member.id} className="flex items-center gap-2 rounded-md border p-2">
+              <label className="flex items-center gap-2 min-w-0 flex-1">
+                <input
+                  type="checkbox"
+                  checked={selectedAccess !== null}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setMapState((prev) => ({
+                      ...prev,
+                      [member.id]: checked ? (prev[member.id] || "view") : null,
+                    }));
+                  }}
+                />
+                <span className="text-sm truncate">{member.name}</span>
+              </label>
+              <select
+                value={selectedAccess || "view"}
+                disabled={selectedAccess === null}
+                onChange={(e) => {
+                  const nextAccess = e.target.value === "edit" ? "edit" : "view";
+                  setMapState((prev) => ({ ...prev, [member.id]: nextAccess }));
+                }}
+                className="h-8 rounded-md border border-input bg-background px-2 text-sm"
+              >
+                <option value="view">View</option>
+                <option value="edit">Edit</option>
+              </select>
+            </div>
+          );
+        })
+      )}
+    </div>
+  );
+
   return (
     <>
-      <div className="grid gap-4 md:grid-cols-[280px_1fr]">
+      <div className="grid gap-4 md:grid-cols-[300px_1fr]">
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Projects</CardTitle>
@@ -296,23 +418,10 @@ export default function Storage() {
             </p>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="flex gap-2">
-              <Input
-                placeholder="New project name"
-                value={newProjectName}
-                onChange={(e) => {
-                  setNewProjectName(e.target.value);
-                  if (projectNameError) setProjectNameError("");
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") void createProject();
-                }}
-              />
-              <Button type="button" size="icon" onClick={() => void createProject()} disabled={!newProjectName.trim()}>
-                <FolderPlus className="w-4 h-4" />
-              </Button>
-            </div>
-            {projectNameError && <p className="text-xs text-destructive">{projectNameError}</p>}
+            <Button type="button" className="w-full" onClick={openCreateProjectDialog}>
+              <FolderPlus className="w-4 h-4" />
+              New Project
+            </Button>
 
             <div className="space-y-1">
               {projects.map((project) => {
@@ -346,14 +455,7 @@ export default function Storage() {
                       </button>
                       <div className="shrink-0 relative w-9 h-9" title={`${formatQuotaPercent(projectUsedBytes, quotaBytes)} of quota`}>
                         <svg viewBox="0 0 36 36" className="w-9 h-9 -rotate-90">
-                          <circle
-                            cx="18"
-                            cy="18"
-                            r={circleRadius}
-                            fill="none"
-                            stroke="hsl(var(--muted))"
-                            strokeWidth={circleStroke}
-                          />
+                          <circle cx="18" cy="18" r={circleRadius} fill="none" stroke="hsl(var(--muted))" strokeWidth={circleStroke} />
                           <circle
                             cx="18"
                             cy="18"
@@ -370,15 +472,17 @@ export default function Storage() {
                           {projectPercent < 1 && projectPercent > 0 ? "<1" : Math.round(projectPercent)}
                         </span>
                       </div>
-                      <Button
-                        type="button"
-                        size="icon"
-                        variant="ghost"
-                        className="h-8 w-8 text-destructive hover:text-destructive"
-                        onClick={() => void deleteProject(project.id)}
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
+                      {project.canDelete && (
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8 text-destructive hover:text-destructive"
+                          onClick={() => void deleteProject(project.id)}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      )}
                     </div>
                   </div>
                 );
@@ -393,33 +497,57 @@ export default function Storage() {
               <Files className="w-4 h-4" />
               {selectedProject ? selectedProject.name : "Storage"}
             </CardTitle>
-            <label className="inline-flex">
-              <input
-                type="file"
-                multiple
-                className="hidden"
-                onChange={handleUpload}
-                disabled={!selectedProject || isUploading || isLoading}
-                accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,image/*"
-              />
-              <Button asChild type="button" disabled={!selectedProject || isUploading || isLoading}>
-                <span>
-                  <Upload className="w-4 h-4" />
-                  {isUploading ? "Uploading..." : "Add Files"}
-                </span>
-              </Button>
-            </label>
+            <div className="flex items-center gap-2">
+              {selectedProject?.canDelete && (
+                <Button type="button" variant="secondary" onClick={openManageAccessDialog}>
+                  <ShieldCheck className="w-4 h-4" />
+                  Manage Access
+                </Button>
+              )}
+              <label className="inline-flex">
+                <input
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={handleUpload}
+                  disabled={!selectedProject || !selectedProject.canEdit || isUploading || isLoading}
+                  accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,image/*"
+                />
+                <Button
+                  asChild
+                  type="button"
+                  variant={selectedProject?.canEdit ? "default" : "outline"}
+                  className={!selectedProject || !selectedProject.canEdit ? "bg-muted text-muted-foreground border-border opacity-100" : ""}
+                  disabled={!selectedProject || !selectedProject.canEdit || isUploading || isLoading}
+                >
+                  <span>
+                    <Upload className="w-4 h-4" />
+                    {isUploading ? "Uploading..." : "Add Files"}
+                  </span>
+                </Button>
+              </label>
+            </div>
           </CardHeader>
 
           <CardContent>
             {isLoading ? (
               <p className="text-sm text-muted-foreground">Loading shared storage...</p>
+            ) : !hasStorageAccess ? (
+              <p className="text-sm text-muted-foreground">Storage tab is disabled for your account.</p>
             ) : !selectedProject ? (
               <p className="text-sm text-muted-foreground">Create or choose a project to start.</p>
             ) : selectedProject.files.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No files yet. Upload documents, images, or PDFs.</p>
+              <div className="space-y-2">
+                {!selectedProject.canEdit && (
+                  <p className="text-xs text-muted-foreground">View-only access: Add/Delete actions are disabled for this project.</p>
+                )}
+                <p className="text-sm text-muted-foreground">No files yet. Upload documents, images, or PDFs.</p>
+              </div>
             ) : (
               <div className="space-y-2">
+                {!selectedProject.canEdit && (
+                  <p className="text-xs text-muted-foreground">View-only access: Add/Delete actions are disabled for this project.</p>
+                )}
                 {selectedProject.files.map((file) => (
                   <div key={file.id} className="rounded-lg border p-3 flex items-center justify-between gap-3">
                     <div className="min-w-0">
@@ -442,10 +570,12 @@ export default function Storage() {
                           Download
                         </Button>
                       </a>
-                      <Button size="sm" variant="destructive" onClick={() => void deleteFile(file.id)}>
-                        <Trash2 className="w-4 h-4" />
-                        Delete
-                      </Button>
+                      {selectedProject.canEdit && (
+                        <Button size="sm" variant="destructive" onClick={() => void deleteFile(file.id)}>
+                          <Trash2 className="w-4 h-4" />
+                          Delete
+                        </Button>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -455,11 +585,55 @@ export default function Storage() {
         </Card>
       </div>
 
+      {createDialogOpen && (
+        <div className="fixed inset-0 z-[210] bg-black/60 p-4 flex items-center justify-center" onClick={() => setCreateDialogOpen(false)}>
+          <div
+            className="w-[95vw] max-w-2xl rounded-lg border bg-background p-4 sm:p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-semibold mb-3">Create Project</h3>
+            <div className="space-y-3">
+              <Input
+                placeholder="Project name"
+                value={createProjectName}
+                onChange={(e) => {
+                  setCreateProjectName(e.target.value);
+                  if (createProjectError) setCreateProjectError("");
+                }}
+              />
+              {createProjectError && <p className="text-xs text-destructive">{createProjectError}</p>}
+
+              <p className="text-sm font-medium">Allow Users (View/Edit)</p>
+              {renderAccessPicker(createAccessMap, setCreateAccessMap)}
+
+              <div className="flex justify-end gap-2 pt-2">
+                <Button variant="outline" onClick={() => setCreateDialogOpen(false)}>Cancel</Button>
+                <Button onClick={() => void createProject()}>Create</Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {accessDialogOpen && selectedProject && (
+        <div className="fixed inset-0 z-[210] bg-black/60 p-4 flex items-center justify-center" onClick={() => setAccessDialogOpen(false)}>
+          <div
+            className="w-[95vw] max-w-2xl rounded-lg border bg-background p-4 sm:p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-semibold mb-1">Manage Project Access</h3>
+            <p className="text-sm text-muted-foreground mb-3">Project: {selectedProject.name}</p>
+            {renderAccessPicker(manageAccessMap, setManageAccessMap)}
+            <div className="flex justify-end gap-2 pt-3">
+              <Button variant="outline" onClick={() => setAccessDialogOpen(false)}>Cancel</Button>
+              <Button onClick={() => void saveManageAccess()}>Save Access</Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {previewFile && (
-        <div
-          className="fixed inset-0 z-[200] bg-black/60 p-4 flex items-center justify-center"
-          onClick={() => setPreviewFile(null)}
-        >
+        <div className="fixed inset-0 z-[200] bg-black/60 p-4 flex items-center justify-center" onClick={() => setPreviewFile(null)}>
           <div
             className="w-[95vw] max-w-5xl max-h-[90vh] overflow-y-auto rounded-lg border bg-background p-4 sm:p-6 relative"
             onClick={(e) => e.stopPropagation()}

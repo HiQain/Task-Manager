@@ -19,6 +19,7 @@ export const users = mysqlTable("users", {
     .notNull()
     .default("5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8"),
   role: varchar("role", { length: 20 }).notNull().default("user"),
+  allowStorage: boolean("allow_storage").notNull().default(false),
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
 });
 
@@ -106,12 +107,27 @@ export const storageFiles = mysqlTable("storage_files", {
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
 });
 
+export const storageProjectAccesses = mysqlTable(
+  "storage_project_accesses",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    projectId: int("project_id").notNull().references(() => storageProjects.id),
+    userId: int("user_id").notNull().references(() => users.id),
+    access: varchar("access", { length: 16 }).notNull().default("view"),
+    createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
+  },
+  (table) => ({
+    projectUserUnique: uniqueIndex("storage_project_access_project_user_idx").on(table.projectId, table.userId),
+  }),
+);
+
 export const insertUserSchema = z.object({
   name: z.string().min(1),
   email: z.string().email(),
   designation: z.string().trim().min(1, "Designation is required").max(120),
   password: z.string().min(6, "Password must be at least 6 characters"),
   role: z.enum(["user", "admin"]).default("user"),
+  allowStorage: z.boolean().default(false),
 });
 
 export const insertTaskSchema = z.object({
@@ -172,6 +188,14 @@ export const insertNotificationSchema = z.object({
 
 export const insertStorageProjectSchema = z.object({
   name: z.string().trim().min(1, "Project name is required").max(255),
+  members: z
+    .array(
+      z.object({
+        userId: z.number().int(),
+        access: z.enum(["view", "edit"]),
+      }),
+    )
+    .optional(),
 });
 
 export const insertStorageFileSchema = z.object({
@@ -179,6 +203,15 @@ export const insertStorageFileSchema = z.object({
   type: z.string().trim().min(1).max(255).optional(),
   size: z.number().int().min(0),
   dataUrl: z.string().min(1),
+});
+
+export const updateStorageProjectAccessSchema = z.object({
+  members: z.array(
+    z.object({
+      userId: z.number().int(),
+      access: z.enum(["view", "edit"]),
+    }),
+  ),
 });
 
 export type User = typeof users.$inferSelect;
@@ -200,3 +233,5 @@ export type StorageProject = typeof storageProjects.$inferSelect;
 export type InsertStorageProject = z.infer<typeof insertStorageProjectSchema>;
 export type StorageFile = typeof storageFiles.$inferSelect;
 export type InsertStorageFile = z.infer<typeof insertStorageFileSchema>;
+export type StorageProjectAccess = typeof storageProjectAccesses.$inferSelect;
+export type UpdateStorageProjectAccess = z.infer<typeof updateStorageProjectAccessSchema>;

@@ -46,6 +46,7 @@ export default function Users() {
     designation: "",
     password: "",
     role: "user" as "user" | "admin",
+    allowStorage: false,
   });
 
   // Redirect non-admin users to dashboard
@@ -63,6 +64,7 @@ export default function Users() {
       designation: "",
       password: "",
       role: "user",
+      allowStorage: false,
     },
   });
 
@@ -110,10 +112,10 @@ export default function Users() {
 
   const closeEditDialog = () => {
     setEditingUserId(null);
-    setEditForm({ name: "", email: "", designation: "", password: "", role: "user" });
+    setEditForm({ name: "", email: "", designation: "", password: "", role: "user", allowStorage: false });
   };
 
-  const openEditDialog = (member: { id: number; name: string; email: string; designation?: string | null; role: string }) => {
+  const openEditDialog = (member: { id: number; name: string; email: string; designation?: string | null; role: string; allowStorage?: boolean | null }) => {
     setEditingUserId(member.id);
     setEditForm({
       name: member.name,
@@ -121,6 +123,7 @@ export default function Users() {
       designation: member.designation || "",
       password: "",
       role: member.role === "admin" ? "admin" : "user",
+      allowStorage: member.role === "admin" ? true : !!member.allowStorage,
     });
   };
 
@@ -133,6 +136,7 @@ export default function Users() {
       email: editForm.email.trim(),
       designation: editForm.designation.trim(),
       role: editForm.role,
+      allowStorage: editForm.allowStorage,
     };
 
     const nextPassword = editForm.password.trim();
@@ -242,10 +246,41 @@ export default function Users() {
                       <FormItem>
                         <FormLabel>Role</FormLabel>
                         <FormControl>
-                          <select {...field} className="h-11 w-full rounded-md border border-input bg-background px-3 py-2">
+                          <select
+                            value={field.value}
+                            onChange={(e) => {
+                              const nextRole = e.target.value as "user" | "admin";
+                              field.onChange(nextRole);
+                              if (nextRole === "admin") {
+                                form.setValue("allowStorage", true, { shouldValidate: true, shouldDirty: true });
+                              }
+                            }}
+                            className="h-11 w-full rounded-md border border-input bg-background px-3 py-2"
+                          >
                             <option value="user">User</option>
                             <option value="admin">Admin</option>
                           </select>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="allowStorage"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Storage Access</FormLabel>
+                        <FormControl>
+                          <label className="h-11 w-full rounded-md border border-input bg-background px-3 py-2 flex items-center gap-2 text-sm">
+                            <input
+                              type="checkbox"
+                              checked={!!field.value}
+                              onChange={(e) => field.onChange(e.target.checked)}
+                              disabled={form.watch("role") === "admin"}
+                            />
+                            Allow storage tab {form.watch("role") === "admin" ? "(always on for admin)" : ""}
+                          </label>
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -281,13 +316,14 @@ export default function Users() {
                 <TableHead className="min-w-[220px]">Email</TableHead>
                 <TableHead className="min-w-[180px]">Designation</TableHead>
                 <TableHead className="min-w-[120px]">Role</TableHead>
+                <TableHead className="min-w-[140px]">Storage</TableHead>
                 <TableHead className="text-right min-w-[100px]">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filteredUsers.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="h-36 text-center text-muted-foreground">
+                  <TableCell colSpan={6} className="h-36 text-center text-muted-foreground">
                     {search.trim() ? "No matching team member found." : "No users found."}
                   </TableCell>
                 </TableRow>
@@ -319,6 +355,16 @@ export default function Users() {
                           : "text-blue-700 bg-blue-50 border-blue-100"}
                       >
                         {member.role === "admin" ? "Admin" : "User"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Badge
+                        variant="outline"
+                        className={member.allowStorage
+                          ? "text-emerald-700 bg-emerald-50 border-emerald-100"
+                          : "text-slate-600 bg-slate-50 border-slate-100"}
+                      >
+                        {member.allowStorage ? "Allowed" : "Blocked"}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right">
@@ -379,12 +425,31 @@ export default function Users() {
               <label className="text-sm font-medium">Role</label>
               <select
                 value={editForm.role}
-                onChange={(e) => setEditForm((prev) => ({ ...prev, role: e.target.value as "user" | "admin" }))}
+                onChange={(e) => {
+                  const nextRole = e.target.value as "user" | "admin";
+                  setEditForm((prev) => ({
+                    ...prev,
+                    role: nextRole,
+                    allowStorage: nextRole === "admin" ? true : prev.allowStorage,
+                  }));
+                }}
                 className="h-10 w-full rounded-md border border-input bg-background px-3 py-2"
               >
                 <option value="user">User</option>
                 <option value="admin">Admin</option>
               </select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Storage Access</label>
+              <label className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={editForm.allowStorage}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, allowStorage: e.target.checked }))}
+                  disabled={editForm.role === "admin"}
+                />
+                Allow storage tab {editForm.role === "admin" ? "(always on for admin)" : ""}
+              </label>
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium">Designation</label>

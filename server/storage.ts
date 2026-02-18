@@ -3,6 +3,7 @@ import {
   messages,
   notifications,
   storageFiles,
+  storageProjectAccesses,
   storageProjects,
   taskChatGroups,
   taskGroupReadStates,
@@ -21,6 +22,7 @@ import {
   type TaskGroupReadState,
   type Notification,
   type StorageFile,
+  type StorageProjectAccess,
   type StorageProject,
   type User,
   type InsertStorageFile,
@@ -78,6 +80,8 @@ export interface IStorage {
   getStorageFile(id: number): Promise<StorageFile | undefined>;
   createStorageFile(data: InsertStorageFile & { projectId: number; createdById: number }): Promise<StorageFile>;
   deleteStorageFile(id: number): Promise<void>;
+  getStorageProjectAccesses(projectId: number): Promise<StorageProjectAccess[]>;
+  replaceStorageProjectAccesses(projectId: number, members: Array<{ userId: number; access: "view" | "edit" }>): Promise<void>;
 }
 
 function hashPassword(password: string): string {
@@ -203,8 +207,10 @@ export class DatabaseStorage implements IStorage {
         .set({
           name: insertUser.name,
           email: insertUser.email,
+          designation: insertUser.designation,
           password: hashPassword(insertUser.password),
           role: insertUser.role,
+          allowStorage: insertUser.allowStorage ?? false,
         })
         .where(eq(users.id, deletedWithSameEmail.id));
 
@@ -618,6 +624,29 @@ export class DatabaseStorage implements IStorage {
 
   async deleteStorageFile(id: number): Promise<void> {
     await db.delete(storageFiles).where(eq(storageFiles.id, id));
+  }
+
+  async getStorageProjectAccesses(projectId: number): Promise<StorageProjectAccess[]> {
+    return await db
+      .select()
+      .from(storageProjectAccesses)
+      .where(eq(storageProjectAccesses.projectId, projectId))
+      .orderBy(asc(storageProjectAccesses.id));
+  }
+
+  async replaceStorageProjectAccesses(
+    projectId: number,
+    members: Array<{ userId: number; access: "view" | "edit" }>
+  ): Promise<void> {
+    await db.delete(storageProjectAccesses).where(eq(storageProjectAccesses.projectId, projectId));
+    if (members.length === 0) return;
+    await db.insert(storageProjectAccesses).values(
+      members.map((member) => ({
+        projectId,
+        userId: member.userId,
+        access: member.access,
+      })),
+    );
   }
 }
 

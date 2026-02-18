@@ -65,6 +65,10 @@ function isAdminUser(user: any): boolean {
   return String(user?.role || "").toLowerCase() === "admin";
 }
 
+function hasStorageFeature(user: any): boolean {
+  return !!user && !!user.allowStorage;
+}
+
 function isDeletedUser(user: any): boolean {
   const email = String(user?.email || "").toLowerCase();
   const password = String(user?.password || "");
@@ -482,7 +486,10 @@ export async function registerRoutes(
 
     try {
       const input = api.users.create.input.parse(req.body);
-      const user = await storage.createUser(input);
+      const user = await storage.createUser({
+        ...input,
+        allowStorage: input.role === "admin" ? true : !!input.allowStorage,
+      });
       res.status(201).json(user);
     } catch (err) {
       if (err instanceof z.ZodError) {
@@ -512,7 +519,17 @@ export async function registerRoutes(
       }
 
       const input = api.users.update.input.parse(req.body);
-      const updatedUser = await storage.updateUser(id, input);
+      const mergedRole = input.role || existing.role;
+      const mergedAllowStorage =
+        mergedRole === "admin"
+          ? true
+          : input.allowStorage !== undefined
+            ? !!input.allowStorage
+            : !!existing.allowStorage;
+      const updatedUser = await storage.updateUser(id, {
+        ...input,
+        allowStorage: mergedAllowStorage,
+      });
       res.json(updatedUser);
     } catch (err) {
       if (err instanceof z.ZodError) {
@@ -607,18 +624,48 @@ export async function registerRoutes(
       return res.status(401).json({ message: "Not authenticated" });
     }
 
+    if (!hasStorageFeature(req.user)) {
+      return res.status(403).json({ message: "Storage access is disabled for your account" });
+    }
+
+    const allUsers = await storage.getUsers();
+    const usersById = new Map(allUsers.map((u) => [u.id, u]));
     const projects = await storage.getStorageProjects();
-    const projectsWithFiles = await Promise.all(
+    const resolvedProjects = await Promise.all(
       projects.map(async (project) => {
+        const accesses = await storage.getStorageProjectAccesses(project.id);
+        const ownAccess = accesses.find((m) => m.userId === req.user.id);
+        const canDelete = isAdminUser(req.user) || project.createdById === req.user.id;
+        const canEdit = canDelete || ownAccess?.access === "edit";
+        const canView = canEdit || ownAccess?.access === "view";
+        if (!canView) return null;
+
         const files = await storage.getStorageFiles(project.id);
+        const members = accesses
+          .map((member) => {
+            const memberUser = usersById.get(member.userId);
+            if (!memberUser) return null;
+            return {
+              userId: member.userId,
+              name: memberUser.name,
+              access: member.access === "edit" ? "edit" as const : "view" as const,
+            };
+          })
+          .filter((v): v is { userId: number; name: string; access: "view" | "edit" } => !!v);
+
         return {
           id: project.id,
           name: project.name,
           createdAt: project.createdAt,
           files,
+          canEdit,
+          canDelete,
+          members,
         };
       }),
     );
+
+    const projectsWithFiles = resolvedProjects.filter((p): p is NonNullable<typeof p> => !!p);
     const usedBytes = projectsWithFiles.reduce(
       (sum, project) => sum + project.files.reduce((fileSum, file) => fileSum + (Number(file.size) || 0), 0),
       0,
@@ -636,6 +683,9 @@ export async function registerRoutes(
     if (!req.user) {
       return res.status(401).json({ message: "Not authenticated" });
     }
+    if (!hasStorageFeature(req.user)) {
+      return res.status(403).json({ message: "Storage access is disabled for your account" });
+    }
 
     try {
       const input = api.storage.createProject.input.parse(req.body);
@@ -643,6 +693,22 @@ export async function registerRoutes(
         name: input.name,
         createdById: req.user.id,
       });
+      const allUsers = await storage.getUsers();
+      const storageEnabledUserIds = new Set(
+        allUsers.filter((u) => !!u.allowStorage).map((u) => u.id),
+      );
+      const members: Array<{ userId: number; access: "view" | "edit" }> = Array.from(
+        new Map(
+          (input.members || [])
+            .filter((member) =>
+              Number.isFinite(member.userId) &&
+              member.userId !== req.user.id &&
+              storageEnabledUserIds.has(member.userId),
+            )
+            .map((member) => [member.userId, { userId: member.userId, access: member.access === "edit" ? "edit" as const : "view" as const }]),
+        ).values(),
+      );
+      await storage.replaceStorageProjectAccesses(project.id, members);
       res.status(201).json(project);
     } catch (err) {
       if (err instanceof z.ZodError) {
@@ -659,6 +725,9 @@ export async function registerRoutes(
     if (!req.user) {
       return res.status(401).json({ message: "Not authenticated" });
     }
+    if (!hasStorageFeature(req.user)) {
+      return res.status(403).json({ message: "Storage access is disabled for your account" });
+    }
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) {
       return res.status(400).json({ message: "Invalid project id" });
@@ -666,6 +735,10 @@ export async function registerRoutes(
     const existing = (await storage.getStorageProjects()).find((project) => project.id === id);
     if (!existing) {
       return res.status(404).json({ message: "Project not found" });
+    }
+    const canDelete = isAdminUser(req.user) || existing.createdById === req.user.id;
+    if (!canDelete) {
+      return res.status(403).json({ message: "Only project owner/admin can delete project" });
     }
     await storage.deleteStorageProject(id);
     res.json({ success: true });
@@ -675,6 +748,9 @@ export async function registerRoutes(
     if (!req.user) {
       return res.status(401).json({ message: "Not authenticated" });
     }
+    if (!hasStorageFeature(req.user)) {
+      return res.status(403).json({ message: "Storage access is disabled for your account" });
+    }
     const projectId = Number(req.params.id);
     if (!Number.isFinite(projectId)) {
       return res.status(400).json({ message: "Invalid project id" });
@@ -682,6 +758,12 @@ export async function registerRoutes(
     const existing = (await storage.getStorageProjects()).find((project) => project.id === projectId);
     if (!existing) {
       return res.status(404).json({ message: "Project not found" });
+    }
+    const accessRows = await storage.getStorageProjectAccesses(projectId);
+    const ownAccess = accessRows.find((entry) => entry.userId === req.user.id);
+    const canEdit = isAdminUser(req.user) || existing.createdById === req.user.id || ownAccess?.access === "edit";
+    if (!canEdit) {
+      return res.status(403).json({ message: "Edit access required" });
     }
 
     try {
@@ -710,6 +792,9 @@ export async function registerRoutes(
     if (!req.user) {
       return res.status(401).json({ message: "Not authenticated" });
     }
+    if (!hasStorageFeature(req.user)) {
+      return res.status(403).json({ message: "Storage access is disabled for your account" });
+    }
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) {
       return res.status(400).json({ message: "Invalid file id" });
@@ -718,8 +803,68 @@ export async function registerRoutes(
     if (!existing) {
       return res.status(404).json({ message: "File not found" });
     }
+    const project = (await storage.getStorageProjects()).find((p) => p.id === existing.projectId);
+    if (!project) {
+      return res.status(404).json({ message: "Project not found" });
+    }
+    const accessRows = await storage.getStorageProjectAccesses(project.id);
+    const ownAccess = accessRows.find((entry) => entry.userId === req.user.id);
+    const canEdit = isAdminUser(req.user) || project.createdById === req.user.id || ownAccess?.access === "edit";
+    if (!canEdit) {
+      return res.status(403).json({ message: "Edit access required" });
+    }
     await storage.deleteStorageFile(id);
     res.json({ success: true });
+  });
+
+  app.post(api.storage.updateAccess.path, async (req, res) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    if (!hasStorageFeature(req.user)) {
+      return res.status(403).json({ message: "Storage access is disabled for your account" });
+    }
+    const projectId = Number(req.params.id);
+    if (!Number.isFinite(projectId)) {
+      return res.status(400).json({ message: "Invalid project id" });
+    }
+    const project = (await storage.getStorageProjects()).find((p) => p.id === projectId);
+    if (!project) {
+      return res.status(404).json({ message: "Project not found" });
+    }
+    const canManage = isAdminUser(req.user) || project.createdById === req.user.id;
+    if (!canManage) {
+      return res.status(403).json({ message: "Only project owner/admin can manage access" });
+    }
+
+    try {
+      const input = api.storage.updateAccess.input.parse(req.body);
+      const allUsers = await storage.getUsers();
+      const storageEnabledUserIds = new Set(
+        allUsers.filter((u) => !!u.allowStorage).map((u) => u.id),
+      );
+      const members: Array<{ userId: number; access: "view" | "edit" }> = Array.from(
+        new Map(
+          (input.members || [])
+            .filter((member) =>
+              Number.isFinite(member.userId) &&
+              member.userId !== project.createdById &&
+              storageEnabledUserIds.has(member.userId),
+            )
+            .map((member) => [member.userId, { userId: member.userId, access: member.access === "edit" ? "edit" as const : "view" as const }]),
+        ).values(),
+      );
+      await storage.replaceStorageProjectAccesses(project.id, members);
+      res.json({ success: true });
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({
+          message: err.errors[0].message,
+          field: err.errors[0].path.join("."),
+        });
+      }
+      throw err;
+    }
   });
 
   // Tasks API
@@ -1232,7 +1377,8 @@ async function seedDatabase() {
         email: "admin@example.com",
         designation: "Administrator",
         password: "password",
-        role: "admin"
+        role: "admin",
+        allowStorage: true,
       });
       console.log(`✅ Created admin user with ID: ${admin.id}, password hash: ${admin.password}`);
       console.log("✅ Database seeded with users and tasks!");

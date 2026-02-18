@@ -366,6 +366,7 @@ export function Sidebar({
 
   const callUserId = incomingCall?.fromUserId ?? connectedPeerUserId;
   const callUserName = callUserId ? `User ${callUserId}` : "Unknown user";
+  const canAccessStorage = !!user?.allowStorage;
 
   // All admin items
   const adminNavItems = [
@@ -375,7 +376,7 @@ export function Sidebar({
     { label: "Team", icon: Users, href: "/users" },
     { label: "Chat", icon: MessageSquare, href: "/chat" },
     { label: "Notifications", icon: Bell, href: "/notifications" },
-    { label: "Storage", icon: HardDrive, href: "/storage" },
+    ...(canAccessStorage ? [{ label: "Storage", icon: HardDrive, href: "/storage" }] : []),
   ];
 
   // User only sees tasks for drag & drop
@@ -384,7 +385,7 @@ export function Sidebar({
     { label: "Members", icon: Users, href: "/members" },
     { label: "Chat", icon: MessageSquare, href: "/chat" },
     { label: "Notifications", icon: Bell, href: "/notifications" },
-    { label: "Storage", icon: HardDrive, href: "/storage" },
+    ...(canAccessStorage ? [{ label: "Storage", icon: HardDrive, href: "/storage" }] : []),
   ];
 
   const navItems = user?.role === "admin" ? adminNavItems : userNavItems;

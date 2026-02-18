@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { insertMessageSchema, insertStorageFileSchema, insertStorageProjectSchema, insertTaskGroupMessageSchema, insertTaskSchema, insertUserSchema, messages, notifications, storageFiles, storageProjects, taskChatGroups, taskGroupMessages, tasks, users } from './schema';
+import { insertMessageSchema, insertStorageFileSchema, insertStorageProjectSchema, insertTaskGroupMessageSchema, insertTaskSchema, insertUserSchema, messages, notifications, storageFiles, storageProjects, taskChatGroups, taskGroupMessages, tasks, updateStorageProjectAccessSchema, users } from './schema';
 
 export const errorSchemas = {
   validation: z.object({
@@ -78,6 +78,7 @@ export const api = {
         designation: z.string().max(120).optional(),
         password: z.string().min(6, "Password must be at least 6 characters").optional(),
         role: z.enum(["user", "admin"]).optional(),
+        allowStorage: z.boolean().optional(),
       }),
       responses: {
         200: z.custom<typeof users.$inferSelect>(),
@@ -300,6 +301,15 @@ export const api = {
               name: z.string(),
               createdAt: z.any().nullable().optional(),
               files: z.array(z.custom<typeof storageFiles.$inferSelect>()),
+              canEdit: z.boolean(),
+              canDelete: z.boolean(),
+              members: z.array(
+                z.object({
+                  userId: z.number(),
+                  name: z.string(),
+                  access: z.enum(["view", "edit"]),
+                }),
+              ),
             }),
           ),
           usedBytes: z.number(),
@@ -346,6 +356,18 @@ export const api = {
         200: z.object({ success: z.boolean() }),
         400: errorSchemas.validation,
         401: errorSchemas.notFound,
+        404: errorSchemas.notFound,
+      },
+    },
+    updateAccess: {
+      method: 'POST' as const,
+      path: '/api/storage/projects/:id/access',
+      input: updateStorageProjectAccessSchema,
+      responses: {
+        200: z.object({ success: z.boolean() }),
+        400: errorSchemas.validation,
+        401: errorSchemas.notFound,
+        403: errorSchemas.notFound,
         404: errorSchemas.notFound,
       },
     },
