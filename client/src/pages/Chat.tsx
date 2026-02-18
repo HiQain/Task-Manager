@@ -182,6 +182,8 @@ export default function Chat() {
   const [isCalling, setIsCalling] = useState(false);
   const [isInCall, setIsInCall] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
+  const [callStartedAt, setCallStartedAt] = useState<number | null>(null);
+  const [callDurationSec, setCallDurationSec] = useState(0);
   const [presenceByUserId, setPresenceByUserId] = useState<Record<number, { isOnline: boolean; lastSeenAt: string | null }>>({});
   const [typingByUserId, setTypingByUserId] = useState<Record<number, boolean>>({});
   const isCallingRef = useRef(false);
@@ -194,6 +196,11 @@ export default function Chat() {
   const typingStopTimeoutRef = useRef<number | null>(null);
   const typingTargetUserIdRef = useRef<number | undefined>(undefined);
   const sentTypingRef = useRef(false);
+  const usersRef = useRef(users);
+
+  useEffect(() => {
+    usersRef.current = users;
+  }, [users]);
 
   const teamMembers = useMemo(
     () => (users || []).filter((u) => u.id !== user?.id),
@@ -377,7 +384,6 @@ export default function Chat() {
       pendingOfferRef.current = sdp as RTCSessionDescriptionInit;
       setIncomingCallFromUserId(fromUserId);
       startRinging("incoming");
-      sessionStorage.removeItem(PENDING_CALL_STORAGE_KEY);
     } catch {
       sessionStorage.removeItem(PENDING_CALL_STORAGE_KEY);
     }
@@ -535,6 +541,18 @@ export default function Chat() {
             sendWebrtcSignal(fromUserId, { type: "decline" });
             return;
           }
+          try {
+            sessionStorage.setItem(
+              PENDING_CALL_STORAGE_KEY,
+              JSON.stringify({
+                fromUserId,
+                sdp: signal?.sdp,
+                createdAt: Date.now(),
+              }),
+            );
+          } catch {
+            // ignore session storage errors
+          }
           pendingOfferFromRef.current = fromUserId;
           pendingOfferRef.current = signal?.sdp;
           setIncomingCallFromUserId(fromUserId);
@@ -548,6 +566,7 @@ export default function Chat() {
           }
           setIsCalling(false);
           setIsInCall(true);
+          setCallStartedAt(Date.now());
           stopRinging();
           clearCallTimeout();
           return;
@@ -563,10 +582,14 @@ export default function Chat() {
         }
 
         if (signalType === "hangup" || signalType === "decline") {
+          const endedByName = usersRef.current?.find((member) => member.id === fromUserId)?.name || "User";
+          sessionStorage.removeItem(PENDING_CALL_STORAGE_KEY);
           stopCurrentSession(false);
           toast({
             title: "Call ended",
-            description: signalType === "decline" ? "Call request was declined." : "Remote user ended the call.",
+            description: signalType === "decline"
+              ? `${endedByName} declined the call.`
+              : `${endedByName} ended the call.`,
           });
         }
       } catch {
@@ -630,7 +653,7 @@ export default function Chat() {
     );
   };
 
-  const stopCurrentSession = (notifyRemote: boolean) => {
+  const stopCurrentSession = (notifyRemote: boolean, clearPendingOfferStorage = true) => {
     const peerUserId = connectedPeerUserIdRef.current;
 
     if (notifyRemote && peerUserId) {
@@ -657,9 +680,14 @@ export default function Chat() {
     setIsCalling(false);
     setIsInCall(false);
     setIsMuted(false);
+    setCallStartedAt(null);
+    setCallDurationSec(0);
     connectedPeerUserIdRef.current = null;
     stopRinging();
     clearCallTimeout();
+    if (clearPendingOfferStorage) {
+      sessionStorage.removeItem(PENDING_CALL_STORAGE_KEY);
+    }
   };
 
   const createPeerConnection = (targetUserId: number) => {
@@ -687,6 +715,7 @@ export default function Chat() {
         remoteAudioRef.current.srcObject = remoteStreamRef.current;
       }
       setIsInCall(true);
+      setCallStartedAt((prev) => prev ?? Date.now());
     };
 
     peerRef.current = pc;
@@ -765,6 +794,8 @@ export default function Chat() {
       sendWebrtcSignal(fromUserId, { type: "answer", sdp: answer });
       setIsCalling(false);
       setIsInCall(true);
+      setCallStartedAt(Date.now());
+      sessionStorage.removeItem(PENDING_CALL_STORAGE_KEY);
     } catch {
       toast({ title: "Unable to join call", description: "Failed to accept call.", variant: "destructive" });
       stopCurrentSession(false);
@@ -780,6 +811,7 @@ export default function Chat() {
     pendingOfferRef.current = null;
     setIncomingCallFromUserId(null);
     stopRinging();
+    sessionStorage.removeItem(PENDING_CALL_STORAGE_KEY);
   };
 
   const toggleMute = () => {
@@ -794,13 +826,31 @@ export default function Chat() {
 
   useEffect(() => {
     return () => {
-      stopCurrentSession(false);
+      const hasPendingIncomingOffer = !!pendingOfferRef.current && !!pendingOfferFromRef.current;
+      stopCurrentSession(false, !hasPendingIncomingOffer);
       if (audioContextRef.current) {
         void audioContextRef.current.close();
         audioContextRef.current = null;
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (!isInCall || !callStartedAt) {
+      setCallDurationSec(0);
+      return;
+    }
+    const intervalId = window.setInterval(() => {
+      setCallDurationSec(Math.floor((Date.now() - callStartedAt) / 1000));
+    }, 1000);
+    return () => window.clearInterval(intervalId);
+  }, [isInCall, callStartedAt]);
+
+  const formatCallDuration = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+  };
 
   const isGroupMode = !!activeTaskGroupId;
   const showConversationPanel = !!activeUserId || !!activeTaskGroupId;
@@ -957,6 +1007,7 @@ export default function Chat() {
   };
 
   const activePresence = activeUserId ? presenceByUserId[activeUserId] : undefined;
+  const isActiveUserOnline = !!activePresence?.isOnline;
   const isActiveUserTyping = activeUserId ? !!typingByUserId[activeUserId] : false;
   const activeUserSubtitle = isActiveUserTyping
     ? "typing..."
@@ -1110,7 +1161,7 @@ export default function Chat() {
                   type="button"
                   variant="outline"
                   className="h-9"
-                  disabled={!activeUserId || isCalling || isInCall}
+                  disabled={!activeUserId || !isActiveUserOnline || isCalling || isInCall}
                   onClick={() => void startCall()}
                 >
                   <Phone className="w-4 h-4 sm:mr-2" />
@@ -1162,7 +1213,7 @@ export default function Chat() {
 
             {(isCalling || isInCall) && (
               <div className="rounded-md border bg-background p-3 text-sm flex items-center justify-between">
-                <span>{isInCall ? "In call" : "Calling..."}</span>
+                <span>{isInCall ? `In call (${formatCallDuration(callDurationSec)})` : "Calling..."}</span>
                 <span className="text-xs text-muted-foreground">{isMuted ? "Mic muted" : "Mic on"}</span>
               </div>
             )}
