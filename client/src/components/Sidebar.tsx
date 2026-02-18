@@ -11,6 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useNotificationUnreadCount } from "@/hooks/use-notifications";
 
 const PENDING_CALL_STORAGE_KEY = "pending_incoming_call_v1";
+const BROWSER_NOTIFICATIONS_PROMPT_KEY = "browser_notifications_prompted_v1";
 type IncomingCallState = {
   fromUserId: number;
   sdp: RTCSessionDescriptionInit;
@@ -48,6 +49,23 @@ export function Sidebar({
   const remoteStreamRef = useRef<MediaStream | null>(null);
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
   const queuedCandidatesRef = useRef<RTCIceCandidateInit[]>([]);
+  const showBrowserNotification = (
+    title: string,
+    options?: { body?: string; tag?: string },
+  ) => {
+    if (typeof window === "undefined" || !("Notification" in window)) return;
+    if (Notification.permission !== "granted") return;
+    if (document.visibilityState === "visible") return;
+
+    const notification = new Notification(title, {
+      body: options?.body,
+      tag: options?.tag,
+    });
+    notification.onclick = () => {
+      window.focus();
+      notification.close();
+    };
+  };
 
   const sendWebrtcSignal = (toUserId: number, signal: Record<string, unknown>) => {
     const socket = wsRef.current;
@@ -224,6 +242,14 @@ export function Sidebar({
   useEffect(() => {
     if (!user?.id) return;
 
+    if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
+      const alreadyPrompted = localStorage.getItem(BROWSER_NOTIFICATIONS_PROMPT_KEY) === "1";
+      if (!alreadyPrompted) {
+        localStorage.setItem(BROWSER_NOTIFICATIONS_PROMPT_KEY, "1");
+        void Notification.requestPermission();
+      }
+    }
+
     const protocol = window.location.protocol === "https:" ? "wss" : "ws";
     const ws = new WebSocket(`${protocol}://${window.location.host}/ws?userId=${user.id}`);
     wsRef.current = ws;
@@ -268,6 +294,10 @@ export function Sidebar({
             // ignore session storage errors
           }
           setIncomingCall({ fromUserId, sdp: signalSdp as RTCSessionDescriptionInit });
+          showBrowserNotification("Incoming Call", {
+            body: `User ${fromUserId} is calling you`,
+            tag: `incoming-call-${fromUserId}`,
+          });
           return;
         }
 
@@ -312,6 +342,10 @@ export function Sidebar({
           title: String(payload.title),
           description: payload?.description ? String(payload.description) : undefined,
           variant: payload?.variant === "destructive" ? "destructive" : "default",
+        });
+        showBrowserNotification(String(payload.title), {
+          body: payload?.description ? String(payload.description) : undefined,
+          tag: payload?.type ? `notify-${String(payload.type)}` : undefined,
         });
       }
 
