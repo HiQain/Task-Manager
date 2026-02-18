@@ -2,6 +2,8 @@ import { db } from "./db";
 import {
   messages,
   notifications,
+  storageFiles,
+  storageProjects,
   taskChatGroups,
   taskGroupReadStates,
   taskGroupMessages,
@@ -18,7 +20,11 @@ import {
   type TaskChatGroup,
   type TaskGroupReadState,
   type Notification,
+  type StorageFile,
+  type StorageProject,
   type User,
+  type InsertStorageFile,
+  type InsertStorageProject,
   type InsertTask,
   type InsertUser,
   type UpdateTaskRequest
@@ -63,6 +69,15 @@ export interface IStorage {
   getNotificationUnreadCount(userId: number): Promise<number>;
   markMessagesAsRead(userId: number, otherUserId: number): Promise<void>;
   getUnreadCountsForUser(userId: number): Promise<{ total: number; byUser: Record<string, number> }>;
+
+  // Shared Storage
+  getStorageProjects(): Promise<StorageProject[]>;
+  createStorageProject(data: InsertStorageProject & { createdById: number }): Promise<StorageProject>;
+  deleteStorageProject(id: number): Promise<void>;
+  getStorageFiles(projectId: number): Promise<StorageFile[]>;
+  getStorageFile(id: number): Promise<StorageFile | undefined>;
+  createStorageFile(data: InsertStorageFile & { projectId: number; createdById: number }): Promise<StorageFile>;
+  deleteStorageFile(id: number): Promise<void>;
 }
 
 function hashPassword(password: string): string {
@@ -547,6 +562,62 @@ export class DatabaseStorage implements IStorage {
     }
 
     return { total: incomingUnread.length, byUser };
+  }
+
+  async getStorageProjects(): Promise<StorageProject[]> {
+    return await db.select().from(storageProjects).orderBy(desc(storageProjects.createdAt));
+  }
+
+  async createStorageProject(data: InsertStorageProject & { createdById: number }): Promise<StorageProject> {
+    const insertResult = await db.insert(storageProjects).values({
+      name: data.name,
+      createdById: data.createdById,
+    });
+    const id = extractInsertId(insertResult);
+    const [project] = await db.select().from(storageProjects).where(eq(storageProjects.id, id));
+    if (!project) {
+      throw new Error("Failed to create storage project");
+    }
+    return project;
+  }
+
+  async deleteStorageProject(id: number): Promise<void> {
+    await db.delete(storageFiles).where(eq(storageFiles.projectId, id));
+    await db.delete(storageProjects).where(eq(storageProjects.id, id));
+  }
+
+  async getStorageFiles(projectId: number): Promise<StorageFile[]> {
+    return await db
+      .select()
+      .from(storageFiles)
+      .where(eq(storageFiles.projectId, projectId))
+      .orderBy(desc(storageFiles.createdAt));
+  }
+
+  async getStorageFile(id: number): Promise<StorageFile | undefined> {
+    const [file] = await db.select().from(storageFiles).where(eq(storageFiles.id, id));
+    return file;
+  }
+
+  async createStorageFile(data: InsertStorageFile & { projectId: number; createdById: number }): Promise<StorageFile> {
+    const insertResult = await db.insert(storageFiles).values({
+      projectId: data.projectId,
+      name: data.name,
+      type: data.type || "application/octet-stream",
+      size: data.size,
+      dataUrl: data.dataUrl,
+      createdById: data.createdById,
+    });
+    const id = extractInsertId(insertResult);
+    const [file] = await db.select().from(storageFiles).where(eq(storageFiles.id, id));
+    if (!file) {
+      throw new Error("Failed to create storage file");
+    }
+    return file;
+  }
+
+  async deleteStorageFile(id: number): Promise<void> {
+    await db.delete(storageFiles).where(eq(storageFiles.id, id));
   }
 }
 

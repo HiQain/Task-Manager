@@ -88,6 +88,24 @@ export const notifications = mysqlTable("notifications", {
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
 });
 
+export const storageProjects = mysqlTable("storage_projects", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  createdById: int("created_by_id").notNull().references(() => users.id),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
+});
+
+export const storageFiles = mysqlTable("storage_files", {
+  id: int("id").autoincrement().primaryKey(),
+  projectId: int("project_id").notNull().references(() => storageProjects.id),
+  name: varchar("name", { length: 255 }).notNull(),
+  type: varchar("type", { length: 255 }).notNull().default("application/octet-stream"),
+  size: int("size").notNull().default(0),
+  dataUrl: longtext("data_url").notNull(),
+  createdById: int("created_by_id").notNull().references(() => users.id),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
+});
+
 export const insertUserSchema = z.object({
   name: z.string().min(1),
   email: z.string().email(),
@@ -152,6 +170,17 @@ export const insertNotificationSchema = z.object({
   entityId: z.number().int().nullable().optional(),
 });
 
+export const insertStorageProjectSchema = z.object({
+  name: z.string().trim().min(1, "Project name is required").max(255),
+});
+
+export const insertStorageFileSchema = z.object({
+  name: z.string().trim().min(1).max(255),
+  type: z.string().trim().min(1).max(255).optional(),
+  size: z.number().int().min(0),
+  dataUrl: z.string().min(1),
+});
+
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type Task = typeof tasks.$inferSelect;
@@ -167,3 +196,7 @@ export type TaskGroupReadState = typeof taskGroupReadStates.$inferSelect;
 export type InsertTaskGroupReadState = z.infer<typeof insertTaskGroupReadStateSchema>;
 export type Notification = typeof notifications.$inferSelect;
 export type InsertNotification = z.infer<typeof insertNotificationSchema>;
+export type StorageProject = typeof storageProjects.$inferSelect;
+export type InsertStorageProject = z.infer<typeof insertStorageProjectSchema>;
+export type StorageFile = typeof storageFiles.$inferSelect;
+export type InsertStorageFile = z.infer<typeof insertStorageFileSchema>;

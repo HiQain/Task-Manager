@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { insertMessageSchema, insertTaskGroupMessageSchema, insertTaskSchema, insertUserSchema, messages, notifications, taskChatGroups, taskGroupMessages, tasks, users } from './schema';
+import { insertMessageSchema, insertStorageFileSchema, insertStorageProjectSchema, insertTaskGroupMessageSchema, insertTaskSchema, insertUserSchema, messages, notifications, storageFiles, storageProjects, taskChatGroups, taskGroupMessages, tasks, users } from './schema';
 
 export const errorSchemas = {
   validation: z.object({
@@ -283,6 +283,68 @@ export const api = {
       path: '/api/notifications/:id',
       responses: {
         200: z.object({ success: z.boolean() }),
+        401: errorSchemas.notFound,
+        404: errorSchemas.notFound,
+      },
+    },
+  },
+  storage: {
+    list: {
+      method: 'GET' as const,
+      path: '/api/storage/projects',
+      responses: {
+        200: z.object({
+          projects: z.array(
+            z.object({
+              id: z.number(),
+              name: z.string(),
+              createdAt: z.any().nullable().optional(),
+              files: z.array(z.custom<typeof storageFiles.$inferSelect>()),
+            }),
+          ),
+          usedBytes: z.number(),
+          quotaBytes: z.number(),
+        }),
+        401: errorSchemas.notFound,
+      },
+    },
+    createProject: {
+      method: 'POST' as const,
+      path: '/api/storage/projects',
+      input: insertStorageProjectSchema,
+      responses: {
+        201: z.custom<typeof storageProjects.$inferSelect>(),
+        400: errorSchemas.validation,
+        401: errorSchemas.notFound,
+      },
+    },
+    deleteProject: {
+      method: 'DELETE' as const,
+      path: '/api/storage/projects/:id',
+      responses: {
+        200: z.object({ success: z.boolean() }),
+        400: errorSchemas.validation,
+        401: errorSchemas.notFound,
+        404: errorSchemas.notFound,
+      },
+    },
+    addFile: {
+      method: 'POST' as const,
+      path: '/api/storage/projects/:id/files',
+      input: insertStorageFileSchema,
+      responses: {
+        201: z.custom<typeof storageFiles.$inferSelect>(),
+        400: errorSchemas.validation,
+        401: errorSchemas.notFound,
+        404: errorSchemas.notFound,
+      },
+    },
+    deleteFile: {
+      method: 'DELETE' as const,
+      path: '/api/storage/files/:id',
+      responses: {
+        200: z.object({ success: z.boolean() }),
+        400: errorSchemas.validation,
         401: errorSchemas.notFound,
         404: errorSchemas.notFound,
       },

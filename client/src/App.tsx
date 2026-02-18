@@ -24,6 +24,7 @@ import AdminConsole from "@/pages/AdminConsole";
 import Chat from "@/pages/Chat";
 import Notifications from "@/pages/Notifications";
 import Profile from "@/pages/Profile";
+import Storage from "@/pages/Storage";
 
 function Router() {
   const { user } = useAuth();
@@ -80,6 +81,12 @@ function Router() {
         </ProtectedRoute>
       </Route>
 
+      <Route path="/storage">
+        <ProtectedRoute>
+          <Storage />
+        </ProtectedRoute>
+      </Route>
+
       <Route path="/admin">
         <ProtectedRoute requiredRole="admin">
           <AdminConsole />
@@ -107,6 +114,7 @@ function Layout({ children }: { children: React.ReactNode }) {
       case "/chat": return "Team Chat";
       case "/notifications": return "Notifications";
       case "/profile": return "Profile";
+      case "/storage": return "Storage";
       default: return "";
     }
   };

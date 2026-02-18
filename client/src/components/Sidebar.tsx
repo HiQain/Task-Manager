@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { Bell, LayoutDashboard, Kanban, ListTodo, Plus, Users, Shield, MessageSquare } from "lucide-react";
+import { Bell, LayoutDashboard, Kanban, ListTodo, Plus, Users, Shield, MessageSquare, HardDrive } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/use-auth";
 import { useUnreadCounts } from "@/hooks/use-chat";
@@ -375,6 +375,7 @@ export function Sidebar({
     { label: "Team", icon: Users, href: "/users" },
     { label: "Chat", icon: MessageSquare, href: "/chat" },
     { label: "Notifications", icon: Bell, href: "/notifications" },
+    { label: "Storage", icon: HardDrive, href: "/storage" },
   ];
 
   // User only sees tasks for drag & drop
@@ -383,6 +384,7 @@ export function Sidebar({
     { label: "Members", icon: Users, href: "/members" },
     { label: "Chat", icon: MessageSquare, href: "/chat" },
     { label: "Notifications", icon: Bell, href: "/notifications" },
+    { label: "Storage", icon: HardDrive, href: "/storage" },
   ];
 
   const navItems = user?.role === "admin" ? adminNavItems : userNavItems;

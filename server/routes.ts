@@ -601,6 +601,127 @@ export async function registerRoutes(
     res.json({ success: true });
   });
 
+  // Shared Storage API
+  app.get(api.storage.list.path, async (req, res) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+
+    const projects = await storage.getStorageProjects();
+    const projectsWithFiles = await Promise.all(
+      projects.map(async (project) => {
+        const files = await storage.getStorageFiles(project.id);
+        return {
+          id: project.id,
+          name: project.name,
+          createdAt: project.createdAt,
+          files,
+        };
+      }),
+    );
+    const usedBytes = projectsWithFiles.reduce(
+      (sum, project) => sum + project.files.reduce((fileSum, file) => fileSum + (Number(file.size) || 0), 0),
+      0,
+    );
+    const quotaBytes = Math.max(1, Number(process.env.STORAGE_QUOTA_BYTES || 1024 * 1024 * 1024));
+
+    res.json({
+      projects: projectsWithFiles,
+      usedBytes,
+      quotaBytes,
+    });
+  });
+
+  app.post(api.storage.createProject.path, async (req, res) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+
+    try {
+      const input = api.storage.createProject.input.parse(req.body);
+      const project = await storage.createStorageProject({
+        name: input.name,
+        createdById: req.user.id,
+      });
+      res.status(201).json(project);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({
+          message: err.errors[0].message,
+          field: err.errors[0].path.join("."),
+        });
+      }
+      throw err;
+    }
+  });
+
+  app.delete(api.storage.deleteProject.path, async (req, res) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ message: "Invalid project id" });
+    }
+    const existing = (await storage.getStorageProjects()).find((project) => project.id === id);
+    if (!existing) {
+      return res.status(404).json({ message: "Project not found" });
+    }
+    await storage.deleteStorageProject(id);
+    res.json({ success: true });
+  });
+
+  app.post(api.storage.addFile.path, async (req, res) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const projectId = Number(req.params.id);
+    if (!Number.isFinite(projectId)) {
+      return res.status(400).json({ message: "Invalid project id" });
+    }
+    const existing = (await storage.getStorageProjects()).find((project) => project.id === projectId);
+    if (!existing) {
+      return res.status(404).json({ message: "Project not found" });
+    }
+
+    try {
+      const input = api.storage.addFile.input.parse(req.body);
+      const file = await storage.createStorageFile({
+        projectId,
+        createdById: req.user.id,
+        name: input.name,
+        type: input.type || "application/octet-stream",
+        size: input.size,
+        dataUrl: input.dataUrl,
+      });
+      res.status(201).json(file);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({
+          message: err.errors[0].message,
+          field: err.errors[0].path.join("."),
+        });
+      }
+      throw err;
+    }
+  });
+
+  app.delete(api.storage.deleteFile.path, async (req, res) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ message: "Invalid file id" });
+    }
+    const existing = await storage.getStorageFile(id);
+    if (!existing) {
+      return res.status(404).json({ message: "File not found" });
+    }
+    await storage.deleteStorageFile(id);
+    res.json({ success: true });
+  });
+
   // Tasks API
   app.get(api.tasks.list.path, async (req, res) => {
     if (!req.user) {
