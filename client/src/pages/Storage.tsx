@@ -409,7 +409,7 @@ export default function Storage() {
 
   return (
     <>
-      <div className="grid gap-4 md:grid-cols-[300px_1fr]">
+      <div className="grid gap-4 lg:grid-cols-[300px_1fr]">
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Projects</CardTitle>
@@ -492,19 +492,19 @@ export default function Storage() {
         </Card>
 
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between gap-2">
+          <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
             <CardTitle className="text-base flex items-center gap-2">
               <Files className="w-4 h-4" />
               {selectedProject ? selectedProject.name : "Storage"}
             </CardTitle>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {selectedProject?.canDelete && (
-                <Button type="button" variant="secondary" onClick={openManageAccessDialog}>
+                <Button type="button" variant="secondary" onClick={openManageAccessDialog} className="w-full sm:w-auto">
                   <ShieldCheck className="w-4 h-4" />
                   Manage Access
                 </Button>
               )}
-              <label className="inline-flex">
+              <label className="inline-flex w-full sm:w-auto">
                 <input
                   type="file"
                   multiple
@@ -517,7 +517,7 @@ export default function Storage() {
                   asChild
                   type="button"
                   variant={selectedProject?.canEdit ? "default" : "outline"}
-                  className={!selectedProject || !selectedProject.canEdit ? "bg-muted text-muted-foreground border-border opacity-100" : ""}
+                  className={`w-full sm:w-auto ${!selectedProject || !selectedProject.canEdit ? "bg-muted text-muted-foreground border-border opacity-100" : ""}`}
                   disabled={!selectedProject || !selectedProject.canEdit || isUploading || isLoading}
                 >
                   <span>
@@ -549,8 +549,8 @@ export default function Storage() {
                   <p className="text-xs text-muted-foreground">View-only access: Add/Delete actions are disabled for this project.</p>
                 )}
                 {selectedProject.files.map((file) => (
-                  <div key={file.id} className="rounded-lg border p-3 flex items-center justify-between gap-3">
-                    <div className="min-w-0">
+                  <div key={file.id} className="rounded-lg border p-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <div className="min-w-0 flex-1">
                       <p className="text-sm font-medium flex items-center gap-2 truncate">
                         {getFileIcon(file)}
                         <span className="truncate">{file.name}</span>
@@ -559,19 +559,19 @@ export default function Storage() {
                         {formatBytes(file.size)} • {file.createdAt ? new Date(file.createdAt).toLocaleString() : "-"}
                       </p>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <Button size="sm" variant="outline" onClick={() => openFile(file)}>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button size="sm" variant="outline" className="w-full sm:w-auto" onClick={() => openFile(file)}>
                         <Eye className="w-4 h-4" />
                         View
                       </Button>
-                      <a href={file.dataUrl} download={file.name}>
-                        <Button size="sm" variant="secondary" type="button">
+                      <a href={file.dataUrl} download={file.name} className="w-full sm:w-auto">
+                        <Button size="sm" variant="secondary" type="button" className="w-full sm:w-auto">
                           <Download className="w-4 h-4" />
                           Download
                         </Button>
                       </a>
                       {selectedProject.canEdit && (
-                        <Button size="sm" variant="destructive" onClick={() => void deleteFile(file.id)}>
+                        <Button size="sm" variant="destructive" className="w-full sm:w-auto" onClick={() => void deleteFile(file.id)}>
                           <Trash2 className="w-4 h-4" />
                           Delete
                         </Button>
@@ -586,9 +586,9 @@ export default function Storage() {
       </div>
 
       {createDialogOpen && (
-        <div className="fixed inset-0 z-[210] bg-black/60 p-4 flex items-center justify-center" onClick={() => setCreateDialogOpen(false)}>
+        <div className="fixed inset-0 z-[210] bg-black/60 p-3 sm:p-4 flex items-start sm:items-center justify-center overflow-y-auto" onClick={() => setCreateDialogOpen(false)}>
           <div
-            className="w-[95vw] max-w-2xl rounded-lg border bg-background p-4 sm:p-6"
+            className="w-full sm:w-[95vw] max-w-2xl max-h-[95vh] overflow-y-auto rounded-lg border bg-background p-4 sm:p-6 mt-6 sm:mt-0"
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="text-lg font-semibold mb-3">Create Project</h3>
@@ -606,9 +606,9 @@ export default function Storage() {
               <p className="text-sm font-medium">Allow Users (View/Edit)</p>
               {renderAccessPicker(createAccessMap, setCreateAccessMap)}
 
-              <div className="flex justify-end gap-2 pt-2">
-                <Button variant="outline" onClick={() => setCreateDialogOpen(false)}>Cancel</Button>
-                <Button onClick={() => void createProject()}>Create</Button>
+              <div className="flex flex-col-reverse sm:flex-row justify-end gap-2 pt-2">
+                <Button variant="outline" className="w-full sm:w-auto" onClick={() => setCreateDialogOpen(false)}>Cancel</Button>
+                <Button className="w-full sm:w-auto" onClick={() => void createProject()}>Create</Button>
               </div>
             </div>
           </div>
@@ -616,17 +616,17 @@ export default function Storage() {
       )}
 
       {accessDialogOpen && selectedProject && (
-        <div className="fixed inset-0 z-[210] bg-black/60 p-4 flex items-center justify-center" onClick={() => setAccessDialogOpen(false)}>
+        <div className="fixed inset-0 z-[210] bg-black/60 p-3 sm:p-4 flex items-start sm:items-center justify-center overflow-y-auto" onClick={() => setAccessDialogOpen(false)}>
           <div
-            className="w-[95vw] max-w-2xl rounded-lg border bg-background p-4 sm:p-6"
+            className="w-full sm:w-[95vw] max-w-2xl max-h-[95vh] overflow-y-auto rounded-lg border bg-background p-4 sm:p-6 mt-6 sm:mt-0"
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="text-lg font-semibold mb-1">Manage Project Access</h3>
             <p className="text-sm text-muted-foreground mb-3">Project: {selectedProject.name}</p>
             {renderAccessPicker(manageAccessMap, setManageAccessMap)}
-            <div className="flex justify-end gap-2 pt-3">
-              <Button variant="outline" onClick={() => setAccessDialogOpen(false)}>Cancel</Button>
-              <Button onClick={() => void saveManageAccess()}>Save Access</Button>
+            <div className="flex flex-col-reverse sm:flex-row justify-end gap-2 pt-3">
+              <Button variant="outline" className="w-full sm:w-auto" onClick={() => setAccessDialogOpen(false)}>Cancel</Button>
+              <Button className="w-full sm:w-auto" onClick={() => void saveManageAccess()}>Save Access</Button>
             </div>
           </div>
         </div>
