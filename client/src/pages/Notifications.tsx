@@ -2,6 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useDeleteNotification, useMarkAllNotificationsRead, useMarkNotificationRead, useNotifications } from "@/hooks/use-notifications";
 import { Loader2, Trash2 } from "lucide-react";
+import { deleteLocalNotification, markAllLocalNotificationsRead, markLocalNotificationRead } from "@/lib/local-notifications";
 
 function formatDate(value: unknown): string {
   const date = value ? new Date(value as any) : null;
@@ -33,7 +34,10 @@ export default function Notifications() {
         </p>
         <Button
           variant="outline"
-          onClick={() => markAllRead.mutate()}
+          onClick={() => {
+            markAllRead.mutate();
+            markAllLocalNotificationsRead();
+          }}
           disabled={markAllRead.isPending || unreadCount === 0}
         >
           Mark All Read
@@ -44,6 +48,7 @@ export default function Notifications() {
         <div className="space-y-3">
           {notifications.map((notification: any) => {
             const isUnread = !notification.readAt;
+            const isLocal = notification?.local === true || typeof notification.id === "string";
             return (
               <Card key={notification.id} className={isUnread ? "border-primary/40" : ""}>
                 <CardContent className="p-4 flex flex-col sm:flex-row gap-3 sm:items-start sm:justify-between">
@@ -60,7 +65,13 @@ export default function Notifications() {
                         <Button
                           size="sm"
                           variant="secondary"
-                          onClick={() => markRead.mutate(notification.id)}
+                          onClick={() => {
+                            if (isLocal) {
+                              markLocalNotificationRead(notification.id);
+                            } else {
+                              markRead.mutate(notification.id);
+                            }
+                          }}
                           disabled={markRead.isPending || deleteNotification.isPending}
                         >
                           Mark Read
@@ -71,7 +82,13 @@ export default function Notifications() {
                       <Button
                         size="sm"
                         variant="ghost"
-                        onClick={() => deleteNotification.mutate(notification.id)}
+                        onClick={() => {
+                          if (isLocal) {
+                            deleteLocalNotification(notification.id);
+                          } else {
+                            deleteNotification.mutate(notification.id);
+                          }
+                        }}
                         disabled={deleteNotification.isPending || markRead.isPending}
                       >
                         <Trash2 className="w-4 h-4" />

@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Sidebar } from "@/components/Sidebar";
 import { TaskDialog } from "@/components/TaskDialog";
+import { ReminderEngine } from "@/components/ReminderEngine";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { useAuth } from "@/hooks/use-auth";
 import { useState } from "react";
@@ -25,6 +26,7 @@ import Chat from "@/pages/Chat";
 import Notifications from "@/pages/Notifications";
 import Profile from "@/pages/Profile";
 import Storage from "@/pages/Storage";
+import Reminder from "@/pages/Reminder";
 
 function Router() {
   const { user } = useAuth();
@@ -87,6 +89,12 @@ function Router() {
         </ProtectedRoute>
       </Route>
 
+      <Route path="/reminder">
+        <ProtectedRoute>
+          <Reminder />
+        </ProtectedRoute>
+      </Route>
+
       <Route path="/admin">
         <ProtectedRoute requiredRole="admin">
           <AdminConsole />
@@ -115,6 +123,7 @@ function Layout({ children }: { children: React.ReactNode }) {
       case "/notifications": return "Notifications";
       case "/profile": return "Profile";
       case "/storage": return "Storage";
+      case "/reminder": return "Reminder";
       default: return "";
     }
   };
@@ -187,6 +196,7 @@ function Layout({ children }: { children: React.ReactNode }) {
       </main>
 
       <TaskDialog open={isDialogOpen} onOpenChange={setIsDialogOpen} />
+      <ReminderEngine />
     </div>
   );
 }

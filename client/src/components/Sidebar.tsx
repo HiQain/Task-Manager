@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { Bell, LayoutDashboard, Kanban, ListTodo, Plus, Users, Shield, MessageSquare, HardDrive } from "lucide-react";
+import { Bell, LayoutDashboard, Kanban, ListTodo, Plus, Users, Shield, MessageSquare, HardDrive, AlarmClock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/use-auth";
 import { useUnreadCounts } from "@/hooks/use-chat";
@@ -343,10 +343,6 @@ export function Sidebar({
           description: payload?.description ? String(payload.description) : undefined,
           variant: payload?.variant === "destructive" ? "destructive" : "default",
         });
-        showBrowserNotification(String(payload.title), {
-          body: payload?.description ? String(payload.description) : undefined,
-          tag: payload?.type ? `notify-${String(payload.type)}` : undefined,
-        });
       }
 
       queryClient.invalidateQueries({ queryKey: [api.chats.unread.path] });
@@ -408,6 +404,7 @@ export function Sidebar({
     { label: "Hiqain Board", icon: Kanban, href: "/board" },
     { label: "List View", icon: ListTodo, href: "/list" },
     { label: "Team", icon: Users, href: "/users" },
+    { label: "Reminder", icon: AlarmClock, href: "/reminder" },
     { label: "Chat", icon: MessageSquare, href: "/chat" },
     { label: "Notifications", icon: Bell, href: "/notifications" },
     ...(canAccessStorage ? [{ label: "Storage", icon: HardDrive, href: "/storage" }] : []),
@@ -417,6 +414,7 @@ export function Sidebar({
   const userNavItems = [
     { label: "Hiqain Board", icon: Kanban, href: "/board" },
     { label: "Members", icon: Users, href: "/members" },
+    { label: "Reminder", icon: AlarmClock, href: "/reminder" },
     { label: "Chat", icon: MessageSquare, href: "/chat" },
     { label: "Notifications", icon: Bell, href: "/notifications" },
     ...(canAccessStorage ? [{ label: "Storage", icon: HardDrive, href: "/storage" }] : []),

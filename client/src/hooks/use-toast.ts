@@ -130,6 +130,50 @@ const listeners: Array<(state: State) => void> = []
 
 let memoryState: State = { toasts: [] }
 
+const BROWSER_TOAST_PROMPT_KEY = "taskflow_browser_toast_prompt_v1"
+
+function nodeToText(value: React.ReactNode): string | undefined {
+  if (typeof value === "string" || typeof value === "number") return String(value)
+  if (Array.isArray(value)) {
+    const text = value
+      .map((item) => nodeToText(item))
+      .filter(Boolean)
+      .join(" ")
+      .trim()
+    return text || undefined
+  }
+  if (React.isValidElement(value)) {
+    return nodeToText(value.props?.children)
+  }
+  return undefined
+}
+
+function notifyBrowserFromToast(id: string, props: Toast) {
+  if (typeof window === "undefined" || !("Notification" in window)) return
+
+  if (Notification.permission === "default") {
+    const alreadyPrompted = localStorage.getItem(BROWSER_TOAST_PROMPT_KEY) === "1"
+    if (!alreadyPrompted) {
+      localStorage.setItem(BROWSER_TOAST_PROMPT_KEY, "1")
+      void Notification.requestPermission()
+    }
+    return
+  }
+
+  if (Notification.permission !== "granted") return
+
+  const title = nodeToText(props.title) || "Notification"
+  const description = nodeToText(props.description)
+  const notification = new Notification(title, {
+    body: description,
+    tag: `toast-${id}`,
+  })
+  notification.onclick = () => {
+    window.focus()
+    notification.close()
+  }
+}
+
 function dispatch(action: Action) {
   memoryState = reducer(memoryState, action)
   listeners.forEach((listener) => {
@@ -160,6 +204,7 @@ function toast({ ...props }: Toast) {
       },
     },
   })
+  notifyBrowserFromToast(id, props)
 
   return {
     id: id,
