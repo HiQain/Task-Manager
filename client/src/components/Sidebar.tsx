@@ -343,6 +343,8 @@ export function Sidebar({
           description: payload?.description ? String(payload.description) : undefined,
           variant: payload?.variant === "destructive" ? "destructive" : "default",
         });
+        queryClient.invalidateQueries({ queryKey: [api.tasks.list.path] });
+        queryClient.invalidateQueries({ queryKey: [api.tasks.get.path] });
       }
 
       queryClient.invalidateQueries({ queryKey: [api.chats.unread.path] });
