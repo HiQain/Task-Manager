@@ -6,6 +6,7 @@ import {
   storageProjectAccesses,
   storageProjects,
   taskChatGroups,
+  taskComments,
   taskGroupReadStates,
   taskGroupMessages,
   tasks,
@@ -13,10 +14,12 @@ import {
   type Message,
   type InsertMessage,
   type InsertTaskGroupMessage,
+  type InsertTaskComment,
   type InsertTaskChatGroup,
   type InsertTaskGroupReadState,
   type InsertNotification,
   type Task,
+  type TaskComment,
   type TaskGroupMessage,
   type TaskChatGroup,
   type TaskGroupReadState,
@@ -57,6 +60,8 @@ export interface IStorage {
   createMessage(data: InsertMessage & { fromUserId: number }): Promise<Message>;
   getTaskChatGroup(taskId: number): Promise<TaskChatGroup | undefined>;
   ensureTaskChatGroup(taskId: number, createdById: number): Promise<TaskChatGroup>;
+  getTaskComments(taskId: number): Promise<TaskComment[]>;
+  createTaskComment(data: Pick<InsertTaskComment, "taskId" | "content"> & { userId: number }): Promise<TaskComment>;
   getTaskChatGroups(): Promise<TaskChatGroup[]>;
   getTaskGroupMessages(taskId: number): Promise<TaskGroupMessage[]>;
   createTaskGroupMessage(data: Pick<InsertTaskGroupMessage, "taskId" | "content"> & { fromUserId: number }): Promise<TaskGroupMessage>;
@@ -385,6 +390,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteTask(id: number): Promise<void> {
+    await db.delete(taskGroupMessages).where(eq(taskGroupMessages.taskId, id));
+    await db.delete(taskGroupReadStates).where(eq(taskGroupReadStates.taskId, id));
+    await db.delete(taskChatGroups).where(eq(taskChatGroups.taskId, id));
+    await db.delete(taskComments).where(eq(taskComments.taskId, id));
     await db.delete(tasks).where(eq(tasks.id, id));
   }
 
@@ -458,6 +467,32 @@ export class DatabaseStorage implements IStorage {
       .from(taskGroupMessages)
       .where(eq(taskGroupMessages.taskId, taskId))
       .orderBy(asc(taskGroupMessages.createdAt));
+  }
+
+  async getTaskComments(taskId: number): Promise<TaskComment[]> {
+    return await db
+      .select()
+      .from(taskComments)
+      .where(eq(taskComments.taskId, taskId))
+      .orderBy(asc(taskComments.createdAt));
+  }
+
+  async createTaskComment(
+    data: Pick<InsertTaskComment, "taskId" | "content"> & { userId: number }
+  ): Promise<TaskComment> {
+    const insertResult = await db
+      .insert(taskComments)
+      .values({
+        taskId: data.taskId,
+        userId: data.userId,
+        content: data.content,
+      });
+    const id = extractInsertId(insertResult);
+    const [comment] = await db.select().from(taskComments).where(eq(taskComments.id, id));
+    if (!comment) {
+      throw new Error("Failed to create task comment");
+    }
+    return comment;
   }
 
   async createTaskGroupMessage(

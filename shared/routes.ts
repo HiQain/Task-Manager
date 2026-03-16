@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { insertMessageSchema, insertStorageFileSchema, insertStorageProjectSchema, insertTaskGroupMessageSchema, insertTaskSchema, insertUserSchema, messages, notifications, storageFiles, storageProjects, taskChatGroups, taskGroupMessages, tasks, updateStorageProjectAccessSchema, users } from './schema';
+import { insertMessageSchema, insertStorageFileSchema, insertStorageProjectSchema, insertTaskCommentSchema, insertTaskGroupMessageSchema, insertTaskSchema, insertUserSchema, messages, notifications, storageFiles, storageProjects, taskChatGroups, taskComments, taskGroupMessages, tasks, updateStorageProjectAccessSchema, users } from './schema';
 
 export const errorSchemas = {
   validation: z.object({
@@ -133,6 +133,29 @@ export const api = {
         200: z.custom<typeof tasks.$inferSelect>(),
         400: errorSchemas.validation,
         404: errorSchemas.notFound,
+      },
+    },
+    comments: {
+      list: {
+        method: 'GET' as const,
+        path: '/api/tasks/:id/comments',
+        responses: {
+          200: z.array(z.custom<typeof taskComments.$inferSelect>()),
+          400: errorSchemas.validation,
+          401: errorSchemas.notFound,
+          404: errorSchemas.notFound,
+        },
+      },
+      create: {
+        method: 'POST' as const,
+        path: '/api/tasks/:id/comments',
+        input: insertTaskCommentSchema.pick({ content: true }),
+        responses: {
+          201: z.custom<typeof taskComments.$inferSelect>(),
+          400: errorSchemas.validation,
+          401: errorSchemas.notFound,
+          404: errorSchemas.notFound,
+        },
       },
     },
     delete: {

@@ -55,6 +55,14 @@ export const taskGroupMessages = mysqlTable("task_group_messages", {
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
 });
 
+export const taskComments = mysqlTable("task_comments", {
+  id: int("id").autoincrement().primaryKey(),
+  taskId: int("task_id").notNull().references(() => tasks.id),
+  userId: int("user_id").notNull().references(() => users.id),
+  content: longtext("content").notNull(),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
+});
+
 export const taskChatGroups = mysqlTable("task_chat_groups", {
   id: int("id").autoincrement().primaryKey(),
   taskId: int("task_id").notNull().references(() => tasks.id).unique(),
@@ -165,6 +173,12 @@ export const insertTaskGroupMessageSchema = z.object({
   content: z.string().min(1, "Message is required").max(900000, "Message is too long"),
 });
 
+export const insertTaskCommentSchema = z.object({
+  taskId: z.number().int(),
+  userId: z.number().int().optional(),
+  content: z.string().min(1, "Comment is required").max(2000, "Comment is too long"),
+});
+
 export const insertTaskChatGroupSchema = z.object({
   taskId: z.number().int(),
   createdById: z.number().int(),
@@ -223,6 +237,8 @@ export type Message = typeof messages.$inferSelect;
 export type InsertMessage = z.infer<typeof insertMessageSchema>;
 export type TaskGroupMessage = typeof taskGroupMessages.$inferSelect;
 export type InsertTaskGroupMessage = z.infer<typeof insertTaskGroupMessageSchema>;
+export type TaskComment = typeof taskComments.$inferSelect;
+export type InsertTaskComment = z.infer<typeof insertTaskCommentSchema>;
 export type TaskChatGroup = typeof taskChatGroups.$inferSelect;
 export type InsertTaskChatGroup = z.infer<typeof insertTaskChatGroupSchema>;
 export type TaskGroupReadState = typeof taskGroupReadStates.$inferSelect;

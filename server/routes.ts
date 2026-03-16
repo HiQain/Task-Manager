@@ -1099,6 +1099,59 @@ export async function registerRoutes(
     res.status(204).send();
   });
 
+  app.get(api.tasks.comments.list.path, async (req, res) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const taskId = Number(req.params.id);
+    if (!Number.isFinite(taskId)) {
+      return res.status(400).json({ message: "Invalid task id" });
+    }
+    const task = await storage.getTask(taskId);
+    if (!task) {
+      return res.status(404).json({ message: "Task not found" });
+    }
+    if (!canUserAccessTask(req.user, task) && !isAdminUser(req.user)) {
+      return res.status(403).json({ message: "Not authorized to view comments" });
+    }
+    const comments = await storage.getTaskComments(taskId);
+    res.json(comments);
+  });
+
+  app.post(api.tasks.comments.create.path, async (req, res) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const taskId = Number(req.params.id);
+    if (!Number.isFinite(taskId)) {
+      return res.status(400).json({ message: "Invalid task id" });
+    }
+    const task = await storage.getTask(taskId);
+    if (!task) {
+      return res.status(404).json({ message: "Task not found" });
+    }
+    if (!canUserAccessTask(req.user, task) && !isAdminUser(req.user)) {
+      return res.status(403).json({ message: "Not authorized to comment" });
+    }
+    try {
+      const input = api.tasks.comments.create.input.parse(req.body);
+      const comment = await storage.createTaskComment({
+        taskId,
+        userId: req.user.id,
+        content: input.content,
+      });
+      res.status(201).json(comment);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({
+          message: err.errors[0].message,
+          field: err.errors[0].path.join("."),
+        });
+      }
+      throw err;
+    }
+  });
+
   // Chat API
   app.get(api.chats.users.path, async (req, res) => {
     if (!req.user) {
