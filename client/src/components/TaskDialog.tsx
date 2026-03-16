@@ -7,13 +7,13 @@ import { useUsers } from "@/hooks/use-users";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, User as UserIcon } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useEnsureTaskGroup } from "@/hooks/use-chat";
+import { RichTextEditor } from "@/components/RichTextEditor";
 
 interface TaskDialogProps {
   open: boolean;
@@ -223,11 +223,11 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
                     <FormItem>
                       <FormLabel>Description</FormLabel>
                       <FormControl>
-                        <Textarea
-                          placeholder="Add details about this task..."
-                          className="resize-none min-h-[100px]"
-                          {...field}
+                        <RichTextEditor
                           value={field.value || ""}
+                          onChange={(val) => field.onChange(val)}
+                          placeholder="Add details about this task..."
+                          minHeight="140px"
                         />
                       </FormControl>
                       <FormMessage />

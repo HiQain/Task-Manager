@@ -16,6 +16,7 @@ import { useCreateTaskComment, useTaskComments } from "@/hooks/use-task-comments
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useState } from "react";
+import { stripHtml } from "@/lib/utils";
 
 interface TaskCardProps {
   task: Task;
@@ -48,7 +49,6 @@ function formatDueDate(value?: string | Date | null): string {
 export function TaskCard({ task, index, canEdit, canMove, onEdit, onDelete, onView, onMessage }: TaskCardProps) {
   const { data: users } = useUsers();
   const { user } = useAuth();
-  const [showComments, setShowComments] = useState(false);
   const [commentText, setCommentText] = useState("");
   const rawAssignedToIds = (task as any).assignedToIds;
   let assignedToIds: number[] = [];
@@ -91,7 +91,7 @@ export function TaskCard({ task, index, canEdit, canMove, onEdit, onDelete, onVi
     return participantIds.size > 0;
   })();
   const canComment = !!user?.id && (isCreatedByMe || isAssignedToMe || user?.role === "admin");
-  const { data: comments, isLoading: commentsLoading } = useTaskComments(task.id, showComments);
+  const { data: comments, isLoading: commentsLoading } = useTaskComments(task.id, true);
   const createComment = useCreateTaskComment(task.id);
 
   const handleAddComment = async () => {
@@ -211,72 +211,62 @@ export function TaskCard({ task, index, canEdit, canMove, onEdit, onDelete, onVi
                 </Badge>
               )}
               <p className="text-xs text-muted-foreground line-clamp-2 mb-3 min-h-[1.5em]">
-                {task.description || "No description provided."}
+                {stripHtml(task.description) || "No description provided."}
               </p>
 
               <div className="mb-3" onClick={(e) => e.stopPropagation()}>
-                <button
-                  type="button"
-                  className="text-xs text-muted-foreground hover:text-foreground"
-                  onClick={() => setShowComments((prev) => !prev)}
-                >
-                  {showComments ? "Hide comments" : "Show comments"}
-                </button>
+                <div className="mt-2 space-y-2">
+                  {commentsLoading ? (
+                    <p className="text-xs text-muted-foreground">Loading comments...</p>
+                  ) : comments && comments.length > 0 ? (
+                    <div className="space-y-2 max-h-28 overflow-y-auto pr-1">
+                      {comments.map((comment) => {
+                        const author = users?.find((u) => u.id === comment.userId);
+                        return (
+                          <div key={comment.id} className="rounded-md border border-border/60 p-2">
+                            <p className="text-[11px] font-medium text-foreground">
+                              {author?.name || "User"}
+                            </p>
+                            <p className="text-[11px] text-muted-foreground break-words">
+                              {renderCommentText(comment.content)}
+                            </p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">No comments yet.</p>
+                  )}
 
-                {showComments ? (
-                  <div className="mt-2 space-y-2">
-                    {commentsLoading ? (
-                      <p className="text-xs text-muted-foreground">Loading comments...</p>
-                    ) : comments && comments.length > 0 ? (
-                      <div className="space-y-2 max-h-28 overflow-y-auto pr-1">
-                        {comments.map((comment) => {
-                          const author = users?.find((u) => u.id === comment.userId);
-                          return (
-                            <div key={comment.id} className="rounded-md border border-border/60 p-2">
-                              <p className="text-[11px] font-medium text-foreground">
-                                {author?.name || "User"}
-                              </p>
-                              <p className="text-[11px] text-muted-foreground break-words">
-                                {renderCommentText(comment.content)}
-                              </p>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <p className="text-xs text-muted-foreground">No comments yet.</p>
-                    )}
-
-                    {canComment ? (
-                      <div className="flex gap-2">
-                        <Input
-                          value={commentText}
-                          onChange={(e) => setCommentText(e.target.value)}
-                          placeholder="Write a comment... Use #tags and @mentions"
-                          className="h-8 text-xs"
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") {
-                              e.preventDefault();
-                              void handleAddComment();
-                            }
-                          }}
-                        />
-                        <Button
-                          type="button"
-                          size="sm"
-                          onClick={() => void handleAddComment()}
-                          disabled={createComment.isPending}
-                        >
-                          Send
-                        </Button>
-                      </div>
-                    ) : (
-                      <p className="text-[11px] text-muted-foreground">
-                        Only assigned users can comment.
-                      </p>
-                    )}
-                  </div>
-                ) : null}
+                  {canComment ? (
+                    <div className="flex gap-2">
+                      <Input
+                        value={commentText}
+                        onChange={(e) => setCommentText(e.target.value)}
+                        placeholder="Write a comment... Use #tags and @mentions"
+                        className="h-8 text-xs"
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            void handleAddComment();
+                          }
+                        }}
+                      />
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={() => void handleAddComment()}
+                        disabled={createComment.isPending}
+                      >
+                        Send
+                      </Button>
+                    </div>
+                  ) : (
+                    <p className="text-[11px] text-muted-foreground">
+                      Only assigned users can comment.
+                    </p>
+                  )}
+                </div>
               </div>
 
               {/* Attachments preview */}

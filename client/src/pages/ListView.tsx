@@ -15,6 +15,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Loader2, Pencil, Trash2, CalendarDays, User as UserIcon } from "lucide-react";
+import { stripHtml } from "@/lib/utils";
 import { format } from "date-fns";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useAuth } from "@/hooks/use-auth";
@@ -130,9 +131,9 @@ export default function ListView() {
                   <TableCell>
                     <div className="flex flex-col gap-1">
                       <span className="font-medium text-foreground">{task.title}</span>
-                      {task.description && (
+                      {stripHtml(task.description) && (
                         <span className="text-xs text-muted-foreground line-clamp-1 max-w-[300px]">
-                          {task.description}
+                          {stripHtml(task.description)}
                         </span>
                       )}
                     </div>

@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { type Task } from "@shared/schema";
 import { Clock, User as UserIcon, CalendarClock } from "lucide-react";
 import { useUsers } from "@/hooks/use-users";
+import { stripHtml } from "@/lib/utils";
 
 interface Props {
   open: boolean;
@@ -64,7 +65,7 @@ export function TaskDetailDialog({ open, onOpenChange, task }: Props) {
         <div className="p-6 space-y-5 max-h-[70vh] overflow-y-auto">
           <div>
             <p className="text-xs text-muted-foreground mb-1">Description</p>
-            <p className="text-sm">{task.description || "No description provided."}</p>
+            <p className="text-sm">{stripHtml(task.description) || "No description provided."}</p>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
