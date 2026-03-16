@@ -964,6 +964,10 @@ export async function registerRoutes(
         ...input,
         createdById: req.user.id,
       });
+      const createdParticipants = getTaskParticipantIds(task);
+      if (task.status !== "done" && createdParticipants.length >= 2) {
+        await storage.ensureTaskChatGroup(task.id, req.user.id);
+      }
       await pushTaskUpdateToRelevantUsers("created", task);
       const assignedUserIds = getAssignedUserIds(task).filter((id) => id !== req.user.id);
       if (assignedUserIds.length > 0) {
@@ -1016,6 +1020,10 @@ export async function registerRoutes(
       const { createdById: _createdById, ...safeInput } = (input as any) || {};
 
       const updated = await storage.updateTask(id, safeInput);
+      const updatedParticipants = getTaskParticipantIds(updated);
+      if (updated.status !== "done" && updatedParticipants.length >= 2) {
+        await storage.ensureTaskChatGroup(updated.id, req.user.id);
+      }
       await pushTaskUpdateToRelevantUsers("updated", updated);
 
       const prevAssigned = new Set<number>(getAssignedUserIds(existing));

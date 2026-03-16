@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, User as UserIcon } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
+import { useEnsureTaskGroup } from "@/hooks/use-chat";
 
 interface TaskDialogProps {
   open: boolean;
@@ -24,6 +25,7 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
   const { toast } = useToast();
   const createTask = useCreateTask();
   const updateTask = useUpdateTask();
+  const ensureTaskGroup = useEnsureTaskGroup();
   const { data: users } = useUsers();
   const { user: currentUser } = useAuth();
 
@@ -161,11 +163,18 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
       assignedToId: normalizedAssignedToIds.length > 0 ? normalizedAssignedToIds[0] : undefined,
     };
     try {
+      const shouldCreateGroup = !!currentUser?.id && normalizedAssignedToIds.length > 0;
       if (task) {
         await updateTask.mutateAsync({ id: task.id, ...payload });
+        if (shouldCreateGroup) {
+          await ensureTaskGroup.mutateAsync(task.id);
+        }
         toast({ title: "Task updated", description: "Changes saved successfully." });
       } else {
-        await createTask.mutateAsync(payload);
+        const created = await createTask.mutateAsync(payload);
+        if (shouldCreateGroup) {
+          await ensureTaskGroup.mutateAsync(created.id);
+        }
         toast({ title: "Task created", description: "New task added to your board." });
       }
       onOpenChange(false);

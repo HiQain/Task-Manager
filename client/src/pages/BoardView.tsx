@@ -11,6 +11,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useUsers } from "@/hooks/use-users";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useLocation } from "wouter";
 import { useEnsureTaskGroup } from "@/hooks/use-chat";
 
@@ -55,6 +56,7 @@ export default function BoardView() {
   const [ownershipFilter, setOwnershipFilter] = useState("all");
   const [assigneeFilter, setAssigneeFilter] = useState("all");
   const [dueFilter, setDueFilter] = useState("all");
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; title: string } | null>(null);
 
   const onDragEnd = (result: DropResult) => {
     const { destination, source, draggableId } = result;
@@ -100,11 +102,16 @@ export default function BoardView() {
   };
 
   const handleDelete = (id: number) => {
-    if (confirm("Are you sure you want to delete this task?")) {
-      deleteTask.mutate(id, {
-        onSuccess: () => toast({ title: "Task deleted" }),
-      });
-    }
+    const task = visibleTasks.find((entry) => entry.id === id);
+    setDeleteTarget({ id, title: task?.title || "this task" });
+  };
+
+  const confirmDelete = () => {
+    if (!deleteTarget) return;
+    deleteTask.mutate(deleteTarget.id, {
+      onSuccess: () => toast({ title: "Task deleted" }),
+    });
+    setDeleteTarget(null);
   };
 
   const handleView = (task: Task) => {
@@ -126,12 +133,7 @@ export default function BoardView() {
     );
     const otherParticipantIds = participantIds.filter((id) => id !== user.id);
 
-    if (otherParticipantIds.length === 1) {
-      setLocation(`/chat?userId=${otherParticipantIds[0]}`);
-      return;
-    }
-
-    if (otherParticipantIds.length > 1) {
+    if (otherParticipantIds.length >= 1) {
       try {
         await ensureTaskGroup.mutateAsync(task.id);
       } catch (error) {
@@ -403,6 +405,25 @@ export default function BoardView() {
         }}
         task={selectedTask}
       />
+
+      <Dialog open={deleteTarget !== null} onOpenChange={(open) => (!open ? setDeleteTarget(null) : undefined)}>
+        <DialogContent className="w-[calc(100vw-2rem)] sm:w-full sm:max-w-[420px] fixed !top-1/2 !left-1/2 !-translate-x-1/2 !-translate-y-1/2">
+          <DialogHeader>
+            <DialogTitle>Delete Task</DialogTitle>
+            <DialogDescription>
+              {`Are you sure you want to delete ${deleteTarget?.title || "this task"}?`}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" type="button" onClick={() => setDeleteTarget(null)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" type="button" onClick={confirmDelete} disabled={deleteTask.isPending}>
+              {deleteTask.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Delete"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
