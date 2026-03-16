@@ -1,6 +1,7 @@
 export type TimezoneOption = {
   value: string;
   label: string;
+  abbr: string;
 };
 
 export type ReminderItem = {
@@ -10,15 +11,16 @@ export type ReminderItem = {
   timezone: string;
   datetimeLocal: string;
   triggerAtUtc: number;
+  advanceMinutes?: number;
   createdAt: number;
 };
 
 export const TIMEZONES: TimezoneOption[] = [
-  { value: "America/New_York", label: "US Eastern (New York)" },
-  { value: "America/Chicago", label: "US Central (Chicago)" },
-  { value: "America/Denver", label: "US Mountain (Denver)" },
-  { value: "America/Los_Angeles", label: "US Pacific (Los Angeles)" },
-  { value: "Asia/Karachi", label: "Pakistan (Karachi)" },
+  { value: "America/New_York", label: "US Eastern (New York)", abbr: "EST" },
+  { value: "America/Chicago", label: "US Central (Chicago)", abbr: "CST" },
+  { value: "America/Denver", label: "US Mountain (Denver)", abbr: "MST" },
+  { value: "America/Los_Angeles", label: "US Pacific (Los Angeles)", abbr: "PST" },
+  { value: "Asia/Karachi", label: "Pakistan (Karachi)", abbr: "PKT" },
 ];
 
 export const REMINDERS_STORAGE_KEY = "taskflow_reminders_v2";
@@ -117,6 +119,7 @@ export function readReminders(): ReminderItem[] {
         ...item,
         title: typeof item.title === "string" && item.title.trim() ? item.title : "Reminder",
         description: typeof item.description === "string" ? item.description : "",
+        advanceMinutes: Number.isFinite(item.advanceMinutes) ? Number(item.advanceMinutes) : 0,
       }))
       .sort((a, b) => a.triggerAtUtc - b.triggerAtUtc);
   } catch {
@@ -145,5 +148,26 @@ export function removeReminder(reminderId: string) {
 export function removeReminders(reminderIds: string[]) {
   const idSet = new Set(reminderIds);
   const reminders = readReminders().filter((item) => !idSet.has(item.id));
+  writeReminders(reminders);
+}
+
+export function updateReminder(
+  reminderId: string,
+  patch: Partial<Omit<ReminderItem, "id" | "createdAt">>,
+) {
+  const reminders = readReminders().map((item) =>
+    item.id === reminderId
+      ? {
+          ...item,
+          ...patch,
+          title:
+            typeof patch.title === "string" && patch.title.trim()
+              ? patch.title.trim()
+              : item.title,
+          description: typeof patch.description === "string" ? patch.description : item.description,
+        }
+      : item,
+  );
+  reminders.sort((a, b) => a.triggerAtUtc - b.triggerAtUtc);
   writeReminders(reminders);
 }

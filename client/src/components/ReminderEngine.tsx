@@ -10,8 +10,8 @@ import {
 } from "@/lib/reminders";
 import { addLocalNotification } from "@/lib/local-notifications";
 
-const PRE_REMINDER_MS = 5 * 60 * 1000;
 const REMINDER_BROWSER_PROMPT_KEY = "taskflow_reminder_browser_prompt_v1";
+const PRE_REMINDER_MINUTES = [15, 10, 5, 1];
 
 function formatReminder(reminder: ReminderItem) {
   return new Intl.DateTimeFormat("en-US", {
@@ -91,29 +91,37 @@ export function ReminderEngine() {
     const reminders = readReminders();
     const now = Date.now();
     const reminderIds = new Set(reminders.map((item) => item.id));
-    preNotifiedRef.current.forEach((id) => {
-      if (!reminderIds.has(id)) preNotifiedRef.current.delete(id);
-    });
     dueNotifiedRef.current.forEach((id) => {
       if (!reminderIds.has(id)) dueNotifiedRef.current.delete(id);
     });
+    preNotifiedRef.current.forEach((key) => {
+      const id = key.split("|")[0];
+      if (!reminderIds.has(id)) preNotifiedRef.current.delete(key);
+    });
 
     for (const item of reminders) {
-      const remaining = item.triggerAtUtc - now;
-      if (remaining > 0 && remaining <= PRE_REMINDER_MS && !preNotifiedRef.current.has(item.id)) {
-        preNotifiedRef.current.add(item.id);
-        const body = buildReminderBody(item);
-        addLocalNotification({
-          eventKey: `reminder-pre-${item.id}`,
-          title: `Upcoming: ${item.title}`,
-          description: body,
-        });
-        toast({
-          title: `Upcoming: ${item.title}`,
-          description: body,
-        });
-        showBrowserNotification(`Upcoming: ${item.title}`, body, `reminder-pre-${item.id}`);
+      for (const minutes of PRE_REMINDER_MINUTES) {
+        const alertAt = item.triggerAtUtc - minutes * 60_000;
+        const remaining = alertAt - now;
+        const key = `${item.id}|${minutes}`;
+        if (remaining <= 0 && remaining > -1000 && !preNotifiedRef.current.has(key)) {
+          preNotifiedRef.current.add(key);
+          const body = buildReminderBody(item);
+          const title = `Reminder in ${minutes} min: ${item.title}`;
+          addLocalNotification({
+            eventKey: `reminder-pre-${item.id}-${minutes}`,
+            title,
+            description: body,
+          });
+          toast({
+            title,
+            description: body,
+          });
+          showBrowserNotification(title, body, `reminder-pre-${item.id}-${minutes}`);
+        }
       }
+
+      const remaining = item.triggerAtUtc - now;
       if (remaining <= 0 && !dueNotifiedRef.current.has(item.id)) {
         dueNotifiedRef.current.add(item.id);
         const body = buildReminderBody(item);
