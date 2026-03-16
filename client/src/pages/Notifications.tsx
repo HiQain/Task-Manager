@@ -3,6 +3,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { useDeleteNotification, useMarkAllNotificationsRead, useMarkNotificationRead, useNotifications } from "@/hooks/use-notifications";
 import { Loader2, Trash2 } from "lucide-react";
 import { deleteLocalNotification, markAllLocalNotificationsRead, markLocalNotificationRead } from "@/lib/local-notifications";
+import { useState } from "react";
 
 function formatDate(value: unknown): string {
   const date = value ? new Date(value as any) : null;
@@ -15,6 +16,7 @@ export default function Notifications() {
   const markRead = useMarkNotificationRead();
   const markAllRead = useMarkAllNotificationsRead();
   const deleteNotification = useDeleteNotification();
+  const [isClearing, setIsClearing] = useState(false);
 
   if (isLoading) {
     return (
@@ -25,6 +27,30 @@ export default function Notifications() {
   }
 
   const unreadCount = (notifications || []).filter((n: any) => !n.readAt).length;
+  const hasNotifications = (notifications || []).length > 0;
+  const isLocalNotification = (notification: any) =>
+    notification?.local === true || typeof notification.id === "string";
+
+  const handleClearAll = async () => {
+    if (!hasNotifications) return;
+    setIsClearing(true);
+    try {
+      const serverIds: number[] = [];
+      for (const notification of notifications || []) {
+        if (isLocalNotification(notification)) {
+          deleteLocalNotification(notification.id);
+        } else if (typeof notification.id === "number") {
+          serverIds.push(notification.id);
+        }
+      }
+
+      for (const id of serverIds) {
+        await deleteNotification.mutateAsync(id);
+      }
+    } finally {
+      setIsClearing(false);
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -32,16 +58,25 @@ export default function Notifications() {
         <p className="text-sm text-muted-foreground">
           Total {notifications?.length || 0} notifications, unread {unreadCount}
         </p>
-        <Button
-          variant="outline"
-          onClick={() => {
-            markAllRead.mutate();
-            markAllLocalNotificationsRead();
-          }}
-          disabled={markAllRead.isPending || unreadCount === 0}
-        >
-          Mark All Read
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant="outline"
+            onClick={() => {
+              markAllRead.mutate();
+              markAllLocalNotificationsRead();
+            }}
+            disabled={markAllRead.isPending || unreadCount === 0}
+          >
+            Mark All Read
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={handleClearAll}
+            disabled={isClearing || deleteNotification.isPending || !hasNotifications}
+          >
+            Clear All
+          </Button>
+        </div>
       </div>
 
       {notifications?.length ? (

@@ -472,6 +472,28 @@ export async function registerRoutes(
     res.json(req.user);
   });
 
+  app.post(api.auth.changePassword.path, async (req, res) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    try {
+      const input = api.auth.changePassword.input.parse(req.body);
+      if (!verifyPassword(input.currentPassword, req.user.password)) {
+        return res.status(400).json({ message: "Current password is incorrect" });
+      }
+      await storage.updateUser(req.user.id, { password: input.newPassword });
+      res.json({ message: "Password updated" });
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({
+          message: err.errors[0].message,
+          field: err.errors[0].path.join("."),
+        });
+      }
+      throw err;
+    }
+  });
+
   // Users API
   app.get(api.users.list.path, async (req, res) => {
     const users = await storage.getUsers();

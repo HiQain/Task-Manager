@@ -8,7 +8,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { insertUserSchema, type InsertUser } from "@shared/schema";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, UserPlus, Trash2, Search, Pencil } from "lucide-react";
+import { Loader2, UserPlus, Trash2, Search, Pencil, Eye, EyeOff } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useLocation } from "wouter";
 import { useEffect, useMemo, useState } from "react";
@@ -38,6 +38,9 @@ export default function Users() {
   const deleteUser = useDeleteUser();
   const updateUser = useUpdateUser();
   const { toast } = useToast();
+  const [showCreatePassword, setShowCreatePassword] = useState(false);
+  const [showEditPassword, setShowEditPassword] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string } | null>(null);
   const [search, setSearch] = useState("");
   const [editingUserId, setEditingUserId] = useState<number | null>(null);
   const [editForm, setEditForm] = useState({
@@ -94,12 +97,16 @@ export default function Users() {
     }
   }
 
-  const handleDelete = (id: number) => {
-    if (confirm("Are you sure you want to remove this user? This will affect their assigned tasks.")) {
-      deleteUser.mutate(id, {
-        onSuccess: () => toast({ title: "User deleted" }),
-      });
-    }
+  const handleDelete = (id: number, name: string) => {
+    setDeleteTarget({ id, name });
+  };
+
+  const confirmDelete = () => {
+    if (!deleteTarget) return;
+    deleteUser.mutate(deleteTarget.id, {
+      onSuccess: () => toast({ title: "User deleted" }),
+    });
+    setDeleteTarget(null);
   };
 
   const filteredUsers = useMemo(() => {
@@ -233,7 +240,22 @@ export default function Users() {
                       <FormItem>
                         <FormLabel>Password</FormLabel>
                         <FormControl>
-                          <Input placeholder="Enter password" type="password" {...field} className="h-11" />
+                          <div className="relative">
+                            <Input
+                              placeholder="Enter password"
+                              type={showCreatePassword ? "text" : "password"}
+                              {...field}
+                              className="h-11 pr-10"
+                            />
+                            <button
+                              type="button"
+                              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                              onClick={() => setShowCreatePassword((prev) => !prev)}
+                              aria-label={showCreatePassword ? "Hide password" : "Show password"}
+                            >
+                              {showCreatePassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                            </button>
+                          </div>
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -257,7 +279,7 @@ export default function Users() {
                             }}
                             className="h-11 w-full rounded-md border border-input bg-background px-3 py-2"
                           >
-                            <option value="user">User</option>
+                            <option value="user">Employee</option>
                             <option value="admin">Admin</option>
                           </select>
                         </FormControl>
@@ -354,7 +376,7 @@ export default function Users() {
                           ? "text-purple-700 bg-purple-50 border-purple-100"
                           : "text-blue-700 bg-blue-50 border-blue-100"}
                       >
-                        {member.role === "admin" ? "Admin" : "User"}
+                        {member.role === "admin" ? "Admin" : "Employee"}
                       </Badge>
                     </TableCell>
                     <TableCell>
@@ -380,7 +402,7 @@ export default function Users() {
                         variant="ghost"
                         size="icon"
                         className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                        onClick={() => handleDelete(member.id)}
+                        onClick={() => handleDelete(member.id, member.name)}
                       >
                         <Trash2 className="w-4 h-4" />
                       </Button>
@@ -435,7 +457,7 @@ export default function Users() {
                 }}
                 className="h-10 w-full rounded-md border border-input bg-background px-3 py-2"
               >
-                <option value="user">User</option>
+                <option value="user">Employee</option>
                 <option value="admin">Admin</option>
               </select>
             </div>
@@ -461,12 +483,23 @@ export default function Users() {
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium">New Password (Optional)</label>
-              <Input
-                type="password"
-                value={editForm.password}
-                onChange={(e) => setEditForm((prev) => ({ ...prev, password: e.target.value }))}
-                placeholder="Leave blank to keep unchanged"
-              />
+              <div className="relative">
+                <Input
+                  type={showEditPassword ? "text" : "password"}
+                  value={editForm.password}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, password: e.target.value }))}
+                  placeholder="Leave blank to keep unchanged"
+                  className="pr-10"
+                />
+                <button
+                  type="button"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  onClick={() => setShowEditPassword((prev) => !prev)}
+                  aria-label={showEditPassword ? "Hide password" : "Show password"}
+                >
+                  {showEditPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
             </div>
             <div className="flex justify-end gap-2 pt-2">
               <Button type="button" variant="outline" onClick={closeEditDialog}>
@@ -477,6 +510,25 @@ export default function Users() {
               </Button>
             </div>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deleteTarget !== null} onOpenChange={(open) => (!open ? setDeleteTarget(null) : undefined)}>
+        <DialogContent className="w-[calc(100vw-2rem)] sm:w-full sm:max-w-[420px] fixed !top-1/2 !left-1/2 !-translate-x-1/2 !-translate-y-1/2">
+          <DialogHeader>
+            <DialogTitle>Delete User</DialogTitle>
+            <DialogDescription>
+              {`Are you sure you want to delete ${deleteTarget?.name || "this user"}? This may affect their assigned tasks.`}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" type="button" onClick={() => setDeleteTarget(null)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" type="button" onClick={confirmDelete} disabled={deleteUser.isPending}>
+              {deleteUser.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Delete"}
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

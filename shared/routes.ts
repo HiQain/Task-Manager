@@ -43,6 +43,19 @@ export const api = {
         401: errorSchemas.notFound,
       },
     },
+    changePassword: {
+      method: 'POST' as const,
+      path: '/api/auth/change-password',
+      input: z.object({
+        currentPassword: z.string().min(1, "Current password is required"),
+        newPassword: z.string().min(6, "Password must be at least 6 characters"),
+      }),
+      responses: {
+        200: z.object({ message: z.string() }),
+        400: errorSchemas.validation,
+        401: errorSchemas.notFound,
+      },
+    },
   },
   users: {
     list: {

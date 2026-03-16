@@ -69,6 +69,11 @@ function parseLocalInputValue(value: string) {
   return new Date(year, month - 1, day, hour, minute, 0, 0);
 }
 
+function startOfToday() {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+}
+
 export default function Reminder() {
   const { toast } = useToast();
   const [title, setTitle] = useState<string>("");
@@ -154,9 +159,15 @@ export default function Reminder() {
     setDescription("");
     setDatetimeLocal("");
 
+    const detailLines = [
+      description.trim(),
+      formatDateOnly(triggerAtUtc, timezone),
+      formatMultiTimezoneLine(triggerAtUtc),
+    ].filter(Boolean);
+
     toast({
-      title: isEditing ? "Reminder updated" : "Reminder added",
-      description: isEditing ? "Reminder updated successfully." : "Reminder added successfully.",
+      title: normalizedTitle,
+      description: detailLines.join("\n"),
     });
   };
 
@@ -168,6 +179,7 @@ export default function Reminder() {
     setDescription(reminder.description);
     setTimezone(reminder.timezone);
     setDatetimeLocal(reminder.datetimeLocal);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   const handleCancelEdit = () => {
@@ -268,7 +280,12 @@ export default function Reminder() {
               </PopoverTrigger>
               <PopoverContent className="w-auto p-4 bg-background border shadow-xl" align="start">
                 <div className="flex flex-col gap-4 sm:flex-row">
-                  <Calendar mode="single" selected={selectedDate} onSelect={applyDateFromCalendar} />
+                  <Calendar
+                    mode="single"
+                    selected={selectedDate}
+                    onSelect={applyDateFromCalendar}
+                    disabled={{ before: startOfToday() }}
+                  />
                   <div className="space-y-3">
                     <Label>Time</Label>
                     <div className="flex gap-2">

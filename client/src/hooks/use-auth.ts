@@ -10,6 +10,7 @@ interface AuthContextType {
     error: string | null;
     login: (email: string, password: string) => Promise<User>;
     logout: () => Promise<void>;
+    changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
     isAuthenticated: boolean;
 }
 
@@ -90,12 +91,32 @@ export function useAuth(): AuthContextType {
         },
     });
 
+    const changePasswordMutation = useMutation({
+        mutationFn: async (payload: { currentPassword: string; newPassword: string }) => {
+            const res = await fetch(api.auth.changePassword.path, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+                credentials: 'include',
+            });
+
+            if (!res.ok) {
+                const error = await res.json();
+                throw new Error(error.message || 'Failed to update password');
+            }
+
+            await res.json();
+        },
+    });
+
     return {
         user: user || null,
         isLoading,
         error: error || (fetchError ? 'Failed to fetch user' : null),
         login: async (email, password) => loginMutation.mutateAsync({ email, password }),
         logout: async () => logoutMutation.mutateAsync(),
+        changePassword: async (currentPassword, newPassword) =>
+            changePasswordMutation.mutateAsync({ currentPassword, newPassword }),
         isAuthenticated: !!user,
     };
 }

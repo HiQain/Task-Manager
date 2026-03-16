@@ -13,17 +13,38 @@ import { addLocalNotification } from "@/lib/local-notifications";
 const REMINDER_BROWSER_PROMPT_KEY = "taskflow_reminder_browser_prompt_v1";
 const PRE_REMINDER_MINUTES = [15, 10, 5, 1];
 
-function formatReminder(reminder: ReminderItem) {
+function formatDateOnly(timestamp: number, timezone: string) {
   return new Intl.DateTimeFormat("en-US", {
-    timeZone: reminder.timezone,
+    timeZone: timezone,
     dateStyle: "medium",
+  }).format(new Date(timestamp));
+}
+
+function formatTimeOnly(timestamp: number, timezone: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
     timeStyle: "short",
-  }).format(new Date(reminder.triggerAtUtc));
+  }).format(new Date(timestamp));
+}
+
+function formatMultiTimezoneLine(triggerAtUtc: number) {
+  const zones = [
+    { value: "America/New_York", abbr: "EST" },
+    { value: "America/Chicago", abbr: "CST" },
+    { value: "America/Denver", abbr: "MST" },
+    { value: "America/Los_Angeles", abbr: "PST" },
+    { value: "Asia/Karachi", abbr: "PKT" },
+  ];
+  return zones.map((zone) => `${zone.abbr} ${formatTimeOnly(triggerAtUtc, zone.value)}`).join(" | ");
 }
 
 function buildReminderBody(reminder: ReminderItem) {
-  const at = `${formatReminder(reminder)} (${reminder.timezone})`;
-  return reminder.description ? `${reminder.description} | ${at}` : at;
+  const lines = [
+    reminder.description?.trim(),
+    formatDateOnly(reminder.triggerAtUtc, reminder.timezone),
+    formatMultiTimezoneLine(reminder.triggerAtUtc),
+  ].filter(Boolean);
+  return lines.join("\n");
 }
 
 export function ReminderEngine() {
@@ -203,7 +224,10 @@ export function ReminderEngine() {
                   <p className="text-xs text-muted-foreground">{item.description}</p>
                 )}
                 <p className="text-xs text-muted-foreground">
-                  {formatReminder(item)} ({item.timezone})
+                  {formatDateOnly(item.triggerAtUtc, item.timezone)}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {formatMultiTimezoneLine(item.triggerAtUtc)}
                 </p>
               </div>
             ))}
