@@ -3,6 +3,7 @@ import { Bell, LayoutDashboard, Kanban, ListTodo, Plus, Users, Shield, MessageSq
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/use-auth";
 import { useTaskGroupUnreadCounts, useUnreadCounts } from "@/hooks/use-chat";
+import { useUsers } from "@/hooks/use-users";
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@shared/routes";
@@ -30,6 +31,7 @@ export function Sidebar({
   const { user } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { data: users } = useUsers();
   const { data: unreadCounts } = useUnreadCounts();
   const { data: taskGroupUnreadCounts } = useTaskGroupUnreadCounts();
   const { data: notificationsUnread } = useNotificationUnreadCount();
@@ -295,8 +297,9 @@ export function Sidebar({
             // ignore session storage errors
           }
           setIncomingCall({ fromUserId, sdp: signalSdp as RTCSessionDescriptionInit });
+          const callerName = (users || []).find((member) => member.id === fromUserId)?.name || `User ${fromUserId}`;
           showBrowserNotification("Incoming Call", {
-            body: `User ${fromUserId} is calling you`,
+            body: `${callerName} is calling you`,
             tag: `incoming-call-${fromUserId}`,
           });
           return;
@@ -398,7 +401,9 @@ export function Sidebar({
   };
 
   const callUserId = incomingCall?.fromUserId ?? connectedPeerUserId;
-  const callUserName = callUserId ? `User ${callUserId}` : "Unknown user";
+  const callUserName = callUserId
+    ? (users || []).find((member) => member.id === callUserId)?.name || `User ${callUserId}`
+    : "Unknown user";
   const canAccessStorage = !!user?.allowStorage;
 
   // All admin items

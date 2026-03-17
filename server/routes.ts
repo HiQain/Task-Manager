@@ -1719,7 +1719,7 @@ async function seedDatabase() {
     const existingUsers = await storage.getUsers();
     if (existingUsers.length === 0) {
       const admin = await storage.createUser({
-        name: "admin",
+        name: "Admin",
         email: "admin@hiqain.com",
         designation: "Administrator",
         password: "password",
@@ -1736,7 +1736,17 @@ async function seedDatabase() {
       if (legacyAdmin) {
         await storage.updateUser(legacyAdmin.id, { email: "admin@hiqain.com" });
         console.log("✅ Updated legacy admin email to admin@hiqain.com");
-      } else {
+      }
+
+      const legacyAdminName = existingUsers.find(
+        (member) => member.role === "admin" && (member.name.trim() === "Admin User" || member.name.trim() === "admin"),
+      );
+      if (legacyAdminName) {
+        await storage.updateUser(legacyAdminName.id, { name: "Admin" });
+        console.log("✅ Updated legacy admin name to Admin");
+      }
+
+      if (!legacyAdmin && !legacyAdminName) {
         console.log("ℹ️ Users already exist; skipping seed.");
       }
     }
