@@ -2,6 +2,8 @@ import { db } from "./db";
 import {
   messages,
   notifications,
+  pushSubscriptions,
+  reminders,
   storageFiles,
   storageProjectAccesses,
   storageProjects,
@@ -18,12 +20,16 @@ import {
   type InsertTaskChatGroup,
   type InsertTaskGroupReadState,
   type InsertNotification,
+  type InsertPushSubscription,
+  type ReminderSyncItem,
   type Task,
   type TaskComment,
   type TaskGroupMessage,
   type TaskChatGroup,
   type TaskGroupReadState,
   type Notification,
+  type PushSubscription,
+  type Reminder,
   type StorageFile,
   type StorageProjectAccess,
   type StorageProject,
@@ -34,7 +40,7 @@ import {
   type InsertUser,
   type UpdateTaskRequest
 } from "@shared/schema";
-import { and, asc, desc, eq, isNull, ne, or } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lte, ne, or } from "drizzle-orm";
 import crypto from "crypto";
 
 export interface IStorage {
@@ -74,6 +80,16 @@ export interface IStorage {
   markAllNotificationsRead(userId: number): Promise<void>;
   deleteNotification(id: number): Promise<void>;
   getNotificationUnreadCount(userId: number): Promise<number>;
+
+  // Push subscriptions
+  getPushSubscriptions(userId: number): Promise<PushSubscription[]>;
+  upsertPushSubscription(userId: number, subscription: InsertPushSubscription): Promise<PushSubscription>;
+  deletePushSubscription(userId: number, endpoint: string): Promise<void>;
+
+  // Reminders
+  syncReminders(userId: number, items: ReminderSyncItem[], now?: Date): Promise<void>;
+  getDueReminders(now: Date, limit?: number): Promise<Reminder[]>;
+  markReminderFired(id: number, firedAt: Date): Promise<void>;
   markMessagesAsRead(userId: number, otherUserId: number): Promise<void>;
   getUnreadCountsForUser(userId: number): Promise<{ total: number; byUser: Record<string, number> }>;
 
@@ -575,6 +591,109 @@ export class DatabaseStorage implements IStorage {
       .from(notifications)
       .where(and(eq(notifications.userId, userId), isNull(notifications.readAt)));
     return rows.length;
+  }
+
+  // Push Subscriptions
+  async getPushSubscriptions(userId: number): Promise<PushSubscription[]> {
+    return await db.select().from(pushSubscriptions).where(eq(pushSubscriptions.userId, userId));
+  }
+
+  async upsertPushSubscription(userId: number, subscription: InsertPushSubscription): Promise<PushSubscription> {
+    const existing = await db
+      .select()
+      .from(pushSubscriptions)
+      .where(eq(pushSubscriptions.endpoint, subscription.endpoint));
+
+    if (existing.length > 0) {
+      await db
+        .update(pushSubscriptions)
+        .set({
+          userId,
+          p256dh: subscription.keys.p256dh,
+          auth: subscription.keys.auth,
+          updatedAt: new Date(),
+        })
+        .where(eq(pushSubscriptions.endpoint, subscription.endpoint));
+    } else {
+      await db.insert(pushSubscriptions).values({
+        userId,
+        endpoint: subscription.endpoint,
+        p256dh: subscription.keys.p256dh,
+        auth: subscription.keys.auth,
+      });
+    }
+
+    const [record] = await db
+      .select()
+      .from(pushSubscriptions)
+      .where(eq(pushSubscriptions.endpoint, subscription.endpoint));
+    if (!record) {
+      throw new Error("Failed to store push subscription");
+    }
+    return record;
+  }
+
+  async deletePushSubscription(userId: number, endpoint: string): Promise<void> {
+    await db
+      .delete(pushSubscriptions)
+      .where(and(eq(pushSubscriptions.userId, userId), eq(pushSubscriptions.endpoint, endpoint)));
+  }
+
+  // Reminders
+  async syncReminders(userId: number, items: ReminderSyncItem[], now: Date = new Date()): Promise<void> {
+    const existing = await db.select().from(reminders).where(eq(reminders.userId, userId));
+    const existingByClient = new Map(existing.map((item) => [item.clientId, item]));
+    const incomingIds = new Set(items.map((item) => item.clientId));
+
+    const toDelete = existing.filter((item) => !incomingIds.has(item.clientId)).map((item) => item.id);
+    if (toDelete.length > 0) {
+      await db.delete(reminders).where(inArray(reminders.id, toDelete));
+    }
+
+    for (const item of items) {
+      const existingItem = existingByClient.get(item.clientId);
+      const triggerDate = new Date(item.triggerAtUtc);
+      if (existingItem) {
+        const shouldResetFired =
+          existingItem.triggerAtUtc &&
+          new Date(existingItem.triggerAtUtc).getTime() !== triggerDate.getTime() &&
+          triggerDate.getTime() > now.getTime();
+
+        await db
+          .update(reminders)
+          .set({
+            title: item.title,
+            description: item.description ?? null,
+            triggerAtUtc: triggerDate,
+            timezone: item.timezone,
+            firedAt: shouldResetFired ? null : existingItem.firedAt,
+            updatedAt: new Date(),
+          })
+          .where(eq(reminders.id, existingItem.id));
+      } else {
+        await db.insert(reminders).values({
+          userId,
+          clientId: item.clientId,
+          title: item.title,
+          description: item.description ?? null,
+          triggerAtUtc: triggerDate,
+          timezone: item.timezone,
+        });
+      }
+    }
+  }
+
+  async getDueReminders(now: Date, limit = 50): Promise<Reminder[]> {
+    return await db
+      .select()
+      .from(reminders)
+      .where(and(isNull(reminders.firedAt), lte(reminders.triggerAtUtc, now)))
+      .orderBy(asc(reminders.triggerAtUtc))
+      .limit(limit);
+  }
+
+  async markReminderFired(id: number, firedAt: Date): Promise<void> {
+    await db.update(reminders).set({ firedAt }).where(eq(reminders.id, id));
   }
 
   async markMessagesAsRead(userId: number, otherUserId: number): Promise<void> {

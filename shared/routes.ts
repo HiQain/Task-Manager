@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { insertMessageSchema, insertStorageFileSchema, insertStorageProjectSchema, insertTaskCommentSchema, insertTaskGroupMessageSchema, insertTaskSchema, insertUserSchema, messages, notifications, storageFiles, storageProjects, taskChatGroups, taskComments, taskGroupMessages, tasks, updateStorageProjectAccessSchema, users } from './schema';
+import { insertMessageSchema, insertPushSubscriptionSchema, insertStorageFileSchema, insertStorageProjectSchema, insertTaskCommentSchema, insertTaskGroupMessageSchema, insertTaskSchema, insertUserSchema, messages, notifications, reminderSyncSchema, storageFiles, storageProjects, taskChatGroups, taskComments, taskGroupMessages, tasks, updateStorageProjectAccessSchema, users } from './schema';
 
 export const errorSchemas = {
   validation: z.object({
@@ -322,6 +322,47 @@ export const api = {
         200: z.object({ success: z.boolean() }),
         401: errorSchemas.notFound,
         404: errorSchemas.notFound,
+      },
+    },
+  },
+  push: {
+    vapid: {
+      method: 'GET' as const,
+      path: '/api/push/vapid',
+      responses: {
+        200: z.object({ publicKey: z.string() }),
+        401: errorSchemas.notFound,
+      },
+    },
+    subscribe: {
+      method: 'POST' as const,
+      path: '/api/push/subscribe',
+      input: insertPushSubscriptionSchema,
+      responses: {
+        200: z.object({ success: z.boolean() }),
+        400: errorSchemas.validation,
+        401: errorSchemas.notFound,
+      },
+    },
+    unsubscribe: {
+      method: 'POST' as const,
+      path: '/api/push/unsubscribe',
+      input: z.object({ endpoint: z.string().min(1) }),
+      responses: {
+        200: z.object({ success: z.boolean() }),
+        401: errorSchemas.notFound,
+      },
+    },
+  },
+  reminders: {
+    sync: {
+      method: 'POST' as const,
+      path: '/api/reminders/sync',
+      input: reminderSyncSchema,
+      responses: {
+        200: z.object({ success: z.boolean() }),
+        400: errorSchemas.validation,
+        401: errorSchemas.notFound,
       },
     },
   },

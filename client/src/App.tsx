@@ -8,12 +8,13 @@ import { TaskDialog } from "@/components/TaskDialog";
 import { ReminderEngine } from "@/components/ReminderEngine";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { useAuth } from "@/hooks/use-auth";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import NotFound from "@/pages/not-found";
 import Login from "@/pages/Login";
 import { Button } from "@/components/ui/button";
 import { Menu } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { initPushNotifications } from "@/lib/push";
 
 // Pages
 import Overview from "@/pages/Overview";
@@ -111,6 +112,11 @@ function Layout({ children }: { children: React.ReactNode }) {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [location, setLocation] = useLocation();
+
+  useEffect(() => {
+    if (!user?.id) return;
+    void initPushNotifications();
+  }, [user?.id]);
 
   const getPageTitle = (path: string) => {
     switch (path) {

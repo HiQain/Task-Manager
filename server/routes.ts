@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import { api } from "@shared/routes";
 import { z } from "zod";
 import crypto from "crypto";
+import webpush from "web-push";
 import session from "express-session";
 import { WebSocketServer, WebSocket } from "ws";
 import "express-session";
@@ -221,6 +222,44 @@ export async function registerRoutes(
     emitToUser(userId, { type: "unread:update", payload: counts });
   };
 
+  const vapidPublicKey = process.env.VAPID_PUBLIC_KEY || "";
+  const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY || "";
+  const vapidSubject = process.env.VAPID_SUBJECT || "mailto:admin@hiqain.com";
+  const pushEnabled = !!vapidPublicKey && !!vapidPrivateKey;
+
+  if (pushEnabled) {
+    webpush.setVapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey);
+  }
+
+  const sendPushToUser = async (
+    userId: number,
+    payload: { title: string; body?: string; url?: string; tag?: string },
+  ) => {
+    if (!pushEnabled) return;
+    const subscriptions = await storage.getPushSubscriptions(userId);
+    if (subscriptions.length === 0) return;
+    const data = JSON.stringify(payload);
+
+    await Promise.all(
+      subscriptions.map(async (sub) => {
+        try {
+          await webpush.sendNotification(
+            {
+              endpoint: sub.endpoint,
+              keys: { p256dh: sub.p256dh, auth: sub.auth },
+            },
+            data,
+          );
+        } catch (err: any) {
+          const statusCode = err?.statusCode;
+          if (statusCode === 404 || statusCode === 410) {
+            await storage.deletePushSubscription(userId, sub.endpoint);
+          }
+        }
+      }),
+    );
+  };
+
   const emitNotification = async (
     userIds: Iterable<number>,
     payload: {
@@ -251,6 +290,12 @@ export async function registerRoutes(
             ...payload,
             id: notification.id,
           },
+        });
+        await sendPushToUser(userId, {
+          title: payload.title,
+          body: payload.description,
+          url: payload.entityType === "task" ? "/board" : "/notifications",
+          tag: payload.type || "notification",
         });
       })
     );
@@ -679,6 +724,68 @@ export async function registerRoutes(
     }
     await storage.deleteNotification(id);
     res.json({ success: true });
+  });
+
+  // Push Notifications API
+  app.get(api.push.vapid.path, async (req, res) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    if (!pushEnabled) {
+      return res.status(400).json({ message: "Push is not configured" });
+    }
+    res.json({ publicKey: vapidPublicKey });
+  });
+
+  app.post(api.push.subscribe.path, async (req, res) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    try {
+      const input = api.push.subscribe.input.parse(req.body);
+      await storage.upsertPushSubscription(req.user.id, input);
+      res.json({ success: true });
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({
+          message: err.errors[0].message,
+          field: err.errors[0].path.join("."),
+        });
+      }
+      throw err;
+    }
+  });
+
+  app.post(api.push.unsubscribe.path, async (req, res) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const endpoint = String(req.body?.endpoint || "").trim();
+    if (!endpoint) {
+      return res.status(400).json({ message: "Missing endpoint" });
+    }
+    await storage.deletePushSubscription(req.user.id, endpoint);
+    res.json({ success: true });
+  });
+
+  // Reminders API (sync from client)
+  app.post(api.reminders.sync.path, async (req, res) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    try {
+      const input = api.reminders.sync.input.parse(req.body);
+      await storage.syncReminders(req.user.id, input.items);
+      res.json({ success: true });
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({
+          message: err.errors[0].message,
+          field: err.errors[0].path.join("."),
+        });
+      }
+      throw err;
+    }
   });
 
   // Shared Storage API
@@ -1555,6 +1662,30 @@ export async function registerRoutes(
 
   // Seed Data
   await seedDatabase();
+
+  const reminderIntervalMs = 30_000;
+  if (pushEnabled) {
+    setInterval(async () => {
+      try {
+        const now = new Date();
+        const dueReminders = await storage.getDueReminders(now);
+        if (dueReminders.length === 0) return;
+        await Promise.all(
+          dueReminders.map(async (reminder) => {
+            await sendPushToUser(reminder.userId, {
+              title: `Reminder: ${reminder.title}`,
+              body: reminder.description || "Reminder due",
+              url: "/reminder",
+              tag: `reminder-${reminder.id}`,
+            });
+            await storage.markReminderFired(reminder.id, new Date());
+          }),
+        );
+      } catch (err) {
+        console.error("❌ Reminder push failed:", err);
+      }
+    }, reminderIntervalMs);
+  }
 
   return httpServer;
 }

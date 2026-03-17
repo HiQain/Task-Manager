@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { BellRing } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/use-auth";
 import {
   REMINDERS_CHANGED_EVENT,
   ReminderItem,
@@ -49,12 +50,41 @@ function buildReminderBody(reminder: ReminderItem) {
 
 export function ReminderEngine() {
   const { toast } = useToast();
+  const { user } = useAuth();
   const [dueReminders, setDueReminders] = useState<ReminderItem[]>([]);
   const ringIntervalRef = useRef<number | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const lastDueKeyRef = useRef<string>("");
   const preNotifiedRef = useRef<Set<string>>(new Set());
   const dueNotifiedRef = useRef<Set<string>>(new Set());
+  const syncTimeoutRef = useRef<number | null>(null);
+
+  const syncRemindersToServer = async () => {
+    if (!user?.id) return;
+    const reminders = readReminders();
+    const items = reminders.map((item) => ({
+      clientId: item.id,
+      title: item.title,
+      description: item.description ?? null,
+      triggerAtUtc: item.triggerAtUtc,
+      timezone: item.timezone,
+    }));
+    await fetch("/api/reminders/sync", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ items }),
+    });
+  };
+
+  const scheduleSync = () => {
+    if (syncTimeoutRef.current !== null) {
+      window.clearTimeout(syncTimeoutRef.current);
+    }
+    syncTimeoutRef.current = window.setTimeout(() => {
+      void syncRemindersToServer();
+    }, 800);
+  };
 
   const showBrowserNotification = (title: string, body: string, tag: string) => {
     if (typeof window === "undefined" || !("Notification" in window)) return;
@@ -169,22 +199,30 @@ export function ReminderEngine() {
     }
 
     refreshDueReminders();
+    scheduleSync();
 
     const intervalId = window.setInterval(() => {
       refreshDueReminders();
     }, 1000);
 
-    const handleChanges = () => refreshDueReminders();
+    const handleChanges = () => {
+      refreshDueReminders();
+      scheduleSync();
+    };
     window.addEventListener(REMINDERS_CHANGED_EVENT, handleChanges);
     window.addEventListener("storage", handleChanges);
 
     return () => {
       window.clearInterval(intervalId);
+      if (syncTimeoutRef.current !== null) {
+        window.clearTimeout(syncTimeoutRef.current);
+        syncTimeoutRef.current = null;
+      }
       window.removeEventListener(REMINDERS_CHANGED_EVENT, handleChanges);
       window.removeEventListener("storage", handleChanges);
       stopRing();
     };
-  }, []);
+  }, [user?.id]);
 
   useEffect(() => {
     if (dueReminders.length === 0) {

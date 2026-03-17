@@ -97,6 +97,41 @@ export const notifications = mysqlTable("notifications", {
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
 });
 
+export const pushSubscriptions = mysqlTable(
+  "push_subscriptions",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    userId: int("user_id").notNull().references(() => users.id),
+    endpoint: varchar("endpoint", { length: 512 }).notNull(),
+    p256dh: varchar("p256dh", { length: 255 }).notNull(),
+    auth: varchar("auth", { length: 255 }).notNull(),
+    createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
+    updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow(),
+  },
+  (table) => ({
+    endpointUnique: uniqueIndex("push_subscriptions_endpoint_idx").on(table.endpoint),
+  }),
+);
+
+export const reminders = mysqlTable(
+  "reminders",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    userId: int("user_id").notNull().references(() => users.id),
+    clientId: varchar("client_id", { length: 64 }).notNull(),
+    title: varchar("title", { length: 255 }).notNull(),
+    description: text("description"),
+    triggerAtUtc: timestamp("trigger_at_utc", { mode: "date" }).notNull(),
+    timezone: varchar("timezone", { length: 64 }).notNull().default("UTC"),
+    firedAt: timestamp("fired_at", { mode: "date" }),
+    createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
+    updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow(),
+  },
+  (table) => ({
+    userClientUnique: uniqueIndex("reminders_user_client_idx").on(table.userId, table.clientId),
+  }),
+);
+
 export const storageProjects = mysqlTable("storage_projects", {
   id: int("id").autoincrement().primaryKey(),
   name: varchar("name", { length: 255 }).notNull(),
@@ -200,6 +235,26 @@ export const insertNotificationSchema = z.object({
   entityId: z.number().int().nullable().optional(),
 });
 
+export const insertPushSubscriptionSchema = z.object({
+  endpoint: z.string().min(1),
+  keys: z.object({
+    p256dh: z.string().min(1),
+    auth: z.string().min(1),
+  }),
+});
+
+export const reminderSyncItemSchema = z.object({
+  clientId: z.string().min(1),
+  title: z.string().min(1),
+  description: z.string().nullable().optional(),
+  triggerAtUtc: z.number().int(),
+  timezone: z.string().min(1),
+});
+
+export const reminderSyncSchema = z.object({
+  items: z.array(reminderSyncItemSchema),
+});
+
 export const insertStorageProjectSchema = z.object({
   name: z.string().trim().min(1, "Project name is required").max(255),
   members: z
@@ -245,6 +300,10 @@ export type TaskGroupReadState = typeof taskGroupReadStates.$inferSelect;
 export type InsertTaskGroupReadState = z.infer<typeof insertTaskGroupReadStateSchema>;
 export type Notification = typeof notifications.$inferSelect;
 export type InsertNotification = z.infer<typeof insertNotificationSchema>;
+export type PushSubscription = typeof pushSubscriptions.$inferSelect;
+export type InsertPushSubscription = z.infer<typeof insertPushSubscriptionSchema>;
+export type Reminder = typeof reminders.$inferSelect;
+export type ReminderSyncItem = z.infer<typeof reminderSyncItemSchema>;
 export type StorageProject = typeof storageProjects.$inferSelect;
 export type InsertStorageProject = z.infer<typeof insertStorageProjectSchema>;
 export type StorageFile = typeof storageFiles.$inferSelect;
