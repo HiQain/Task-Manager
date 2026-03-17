@@ -382,7 +382,7 @@ export async function registerRoutes(
       );
     }
 
-    socket.on("message", (raw) => {
+    socket.on("message", async (raw) => {
       try {
         const parsed = JSON.parse(String(raw || "{}"));
         const type = parsed?.type;

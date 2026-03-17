@@ -58,7 +58,7 @@ export default function Login() {
                 <div className="p-8">
                     {/* Header */}
                     <div className="text-center mb-8">
-                        <h1 className="text-3xl font-bold mb-2">Task Master</h1>
+                        <h1 className="text-3xl font-bold mb-2">TaskFlow</h1>
                         <p className="text-gray-500">Sign in to your account</p>
                     </div>
 
