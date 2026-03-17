@@ -130,7 +130,7 @@ export default function Login() {
                         <div className="mt-8 p-4 bg-blue-50 rounded-lg border border-blue-200">
                             <p className="text-sm font-semibold text-blue-900 mb-2">Demo Credentials:</p>
                             <div className="text-xs text-blue-800 space-y-1">
-                                <p><strong>Admin:</strong> admin@example.com / password</p>
+                                <p><strong>Admin:</strong> admin@hiqain.com / password</p>
                                 <p><strong>User:</strong> alice@example.com / password</p>
                             </div>
                         </div>

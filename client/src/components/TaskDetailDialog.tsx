@@ -5,7 +5,11 @@ import { Badge } from "@/components/ui/badge";
 import { type Task } from "@shared/schema";
 import { Clock, User as UserIcon, CalendarClock } from "lucide-react";
 import { useUsers } from "@/hooks/use-users";
-import { stripHtml } from "@/lib/utils";
+import { useCreateTaskComment, useTaskComments } from "@/hooks/use-task-comments";
+import { Input } from "@/components/ui/input";
+import { useAuth } from "@/hooks/use-auth";
+import { formatTaskDescription } from "@/lib/utils";
+import { useEffect, useState } from "react";
 
 interface Props {
   open: boolean;
@@ -15,6 +19,22 @@ interface Props {
 
 export function TaskDetailDialog({ open, onOpenChange, task }: Props) {
   const { data: users } = useUsers();
+  const { user } = useAuth();
+  const [commentText, setCommentText] = useState("");
+  const [mentionQuery, setMentionQuery] = useState("");
+  const [isMentionOpen, setIsMentionOpen] = useState(false);
+  const taskId = task?.id ?? 0;
+
+  const { data: comments, isLoading: commentsLoading } = useTaskComments(taskId, open && !!taskId, 5000);
+  const createComment = useCreateTaskComment(taskId);
+
+  useEffect(() => {
+    if (!open) {
+      setCommentText("");
+      setMentionQuery("");
+      setIsMentionOpen(false);
+    }
+  }, [open, task?.id]);
   if (!task) return null;
 
   const rawAssignedToIds = (task as any).assignedToIds;
@@ -51,7 +71,76 @@ export function TaskDetailDialog({ open, onOpenChange, task }: Props) {
       ? "bg-orange-50 text-orange-600 border-orange-200"
       : task.priority === "low"
         ? "bg-slate-100 text-slate-600 border-slate-200"
-        : "bg-blue-50 text-blue-600 border-blue-200";
+      : "bg-blue-50 text-blue-600 border-blue-200";
+
+  const isCreatedByMe = !!user?.id && task.createdById === user.id;
+  const isAssignedToMe = !!user?.id && assignedToIds.includes(user.id);
+  const canComment = !!user?.id && (isCreatedByMe || isAssignedToMe || user?.role === "admin");
+  const handleAddComment = async () => {
+    const trimmed = commentText.trim();
+    if (!trimmed) return;
+    try {
+      await createComment.mutateAsync(trimmed);
+      setCommentText("");
+    } catch {
+      // handled by toast elsewhere if needed
+    }
+  };
+
+  const getMentionToken = (value: string) => {
+    const match = value.match(/(?:^|\s)@([a-z0-9._-]*)$/i);
+    return match ? match[1] : null;
+  };
+
+  const getMentionLabel = (member: { name?: string | null; email?: string | null }) => {
+    const name = String(member.name || "").trim();
+    if (name) {
+      return name.split(/\s+/)[0];
+    }
+    const email = String(member.email || "").trim();
+    if (email) return email.split("@")[0] || email;
+    return "user";
+  };
+
+  const mentionCandidates = (users || [])
+    .filter((member) => member.id !== user?.id)
+    .filter((member) => {
+      if (!mentionQuery) return true;
+      const token = mentionQuery.toLowerCase();
+      const name = String(member.name || "").toLowerCase();
+      const email = String(member.email || "").toLowerCase();
+      return name.includes(token) || email.includes(token);
+    })
+    .slice(0, 6);
+
+  const insertMention = (label: string) => {
+    setCommentText((prev) =>
+      prev.replace(/(^|\s)@([a-z0-9._-]*)$/i, `$1@${label} `),
+    );
+    setMentionQuery("");
+    setIsMentionOpen(false);
+  };
+
+  const renderCommentText = (text: string) => {
+    const parts = text.split(/(\s+)/);
+    return parts.map((part, idx) => {
+      if (part.startsWith("#")) {
+        return (
+          <span key={`${part}-${idx}`} className="text-indigo-600 font-medium">
+            {part}
+          </span>
+        );
+      }
+      if (part.startsWith("@")) {
+        return (
+          <span key={`${part}-${idx}`} className="text-emerald-600 font-medium">
+            {part}
+          </span>
+        );
+      }
+      return <span key={`${part}-${idx}`}>{part}</span>;
+    });
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -65,7 +154,9 @@ export function TaskDetailDialog({ open, onOpenChange, task }: Props) {
         <div className="p-6 space-y-5 max-h-[70vh] overflow-y-auto">
           <div>
             <p className="text-xs text-muted-foreground mb-1">Description</p>
-            <p className="text-sm">{stripHtml(task.description) || "No description provided."}</p>
+            <p className="text-sm whitespace-pre-line break-words">
+              {formatTaskDescription(task.description) || "No description provided."}
+            </p>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -127,7 +218,6 @@ export function TaskDetailDialog({ open, onOpenChange, task }: Props) {
                       <div className="flex flex-col gap-2">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img src={a.data} alt={a.name} className="object-cover w-24 h-24 rounded border" />
-                        <span className="text-xs text-muted-foreground">{a.name}</span>
                       </div>
                     ) : (
                       <a href={a.data} download={a.name} className="text-sm underline underline-offset-2">
@@ -135,7 +225,7 @@ export function TaskDetailDialog({ open, onOpenChange, task }: Props) {
                       </a>
                     )}
                     <div className="mt-2 text-xs text-muted-foreground">
-                      Reason: {a?.reason?.trim() ? a.reason : "No reason provided"}
+                      Description: {a?.reason?.trim() ? a.reason : "No description provided"}
                     </div>
                   </div>
                 ))}
@@ -154,6 +244,106 @@ export function TaskDetailDialog({ open, onOpenChange, task }: Props) {
                 Due: {task.dueDate ? new Date(task.dueDate).toLocaleDateString() : "Not set"}
               </span>
             </div>
+          </div>
+
+          <div className="border-t pt-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium">Comments</p>
+                <p className="text-xs text-muted-foreground">Use @ to mention users.</p>
+              </div>
+            </div>
+
+            {commentsLoading ? (
+              <p className="text-xs text-muted-foreground">Loading comments...</p>
+            ) : comments && comments.length > 0 ? (
+              <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                {comments.map((comment) => {
+                  const author = users?.find((u) => u.id === comment.userId);
+                  return (
+                    <div key={comment.id} className="rounded-md border border-border/60 p-3">
+                      <p className="text-[11px] font-medium text-foreground">
+                        {author?.name || "User"}
+                      </p>
+                      <p className="text-[12px] text-muted-foreground break-words">
+                        {renderCommentText(comment.content)}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">No comments yet.</p>
+            )}
+
+            {canComment ? (
+              <div className="flex flex-col sm:flex-row gap-2 relative">
+                <div className="relative w-full">
+                  <Input
+                    value={commentText}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      setCommentText(next);
+                      const token = getMentionToken(next);
+                      if (token !== null) {
+                        setMentionQuery(token);
+                        setIsMentionOpen(true);
+                      } else {
+                        setMentionQuery("");
+                        setIsMentionOpen(false);
+                      }
+                    }}
+                    placeholder="Write a comment... Use #tags and @mentions"
+                    className="h-9 text-sm"
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        if (isMentionOpen && mentionCandidates[0]) {
+                          insertMention(getMentionLabel(mentionCandidates[0]));
+                          return;
+                        }
+                        void handleAddComment();
+                      }
+                      if (e.key === "Escape") {
+                        setIsMentionOpen(false);
+                      }
+                    }}
+                  />
+                  {isMentionOpen && mentionCandidates.length > 0 && (
+                    <div className="absolute z-10 mt-1 w-full rounded-md border bg-background shadow-md">
+                      {mentionCandidates.map((member) => {
+                        const label = getMentionLabel(member);
+                        return (
+                          <button
+                            key={member.id}
+                            type="button"
+                            className="w-full text-left px-3 py-2 text-sm hover:bg-muted"
+                            onClick={() => insertMention(label)}
+                          >
+                            <span className="font-medium">@{label}</span>
+                            <span className="text-xs text-muted-foreground ml-2">
+                              {member.name || member.email}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+                <Button
+                  type="button"
+                  className="sm:w-auto"
+                  onClick={() => void handleAddComment()}
+                  disabled={createComment.isPending}
+                >
+                  Send
+                </Button>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Only assigned users can comment.
+              </p>
+            )}
           </div>
         </div>
 

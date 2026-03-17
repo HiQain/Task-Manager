@@ -87,7 +87,9 @@ export default function Storage() {
   const selectedProject = projects.find((p) => p.id === selectedProjectId) || null;
 
   const storageAllowedUsers = useMemo(() => {
-    return (users || []).filter((member) => !!member.allowStorage && member.id !== user?.id);
+    return (users || []).filter(
+      (member) => (member.role === "admin" || !!member.allowStorage) && member.id !== user?.id,
+    );
   }, [users, user?.id]);
 
   const projectUsageById = useMemo(() => {

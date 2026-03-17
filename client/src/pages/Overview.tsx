@@ -6,7 +6,7 @@ import { format } from "date-fns";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 import { DragDropContext, Droppable, Draggable, DropResult } from "@hello-pangea/dnd";
 import { useQueryClient } from "@tanstack/react-query";
-import { stripHtml } from "@/lib/utils";
+import { formatTaskDescription } from "@/lib/utils";
 
 export default function Overview() {
   const { data: tasks, isLoading } = useTasks();
@@ -87,7 +87,9 @@ export default function Overview() {
                               }`}
                           >
                             <p className="font-medium text-sm">{task.title}</p>
-                            <p className="text-xs text-muted-foreground mt-1">{stripHtml(task.description)}</p>
+                            <p className="text-xs text-muted-foreground mt-1 whitespace-pre-line break-words">
+                              {formatTaskDescription(task.description)}
+                            </p>
                           </div>
                         )}
                       </Draggable>
@@ -125,7 +127,9 @@ export default function Overview() {
                               }`}
                           >
                             <p className="font-medium text-sm">{task.title}</p>
-                            <p className="text-xs text-muted-foreground mt-1">{stripHtml(task.description)}</p>
+                            <p className="text-xs text-muted-foreground mt-1 whitespace-pre-line break-words">
+                              {formatTaskDescription(task.description)}
+                            </p>
                           </div>
                         )}
                       </Draggable>
@@ -163,7 +167,9 @@ export default function Overview() {
                               }`}
                           >
                             <p className="font-medium text-sm line-through">{task.title}</p>
-                            <p className="text-xs text-muted-foreground mt-1">{stripHtml(task.description)}</p>
+                            <p className="text-xs text-muted-foreground mt-1 whitespace-pre-line break-words">
+                              {formatTaskDescription(task.description)}
+                            </p>
                           </div>
                         )}
                       </Draggable>

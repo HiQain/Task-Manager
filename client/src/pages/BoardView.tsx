@@ -115,11 +115,8 @@ export default function BoardView() {
   };
 
   const handleView = (task: Task) => {
-    const canEditTask = !!user?.id && task.createdById === user.id;
-    if (!canEditTask) {
-      setSelectedTask(task);
-      setIsDetailDialogOpen(true);
-    }
+    setSelectedTask(task);
+    setIsDetailDialogOpen(true);
   };
 
   const handleMessage = async (task: Task) => {

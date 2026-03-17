@@ -85,6 +85,47 @@ function getTaskParticipantIds(task: any): number[] {
   return Array.from(ids);
 }
 
+function normalizeMentionToken(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9._-]/g, "");
+}
+
+function extractMentionedUserIds(
+  content: string,
+  users: Array<{ id: number; name?: string | null; email?: string | null }>
+): number[] {
+  if (!content) return [];
+  const matches = Array.from(content.matchAll(/@([a-z0-9._-]+)/gi));
+  if (matches.length === 0) return [];
+
+  const tokens = new Set(matches.map((m) => normalizeMentionToken(m[1])));
+  const mentionedIds = new Set<number>();
+
+  users.forEach((member) => {
+    if (!member?.id) return;
+    const keys = new Set<string>();
+    const name = String(member.name || "").trim();
+    const email = String(member.email || "").trim();
+    if (email) {
+      const emailKey = email.split("@")[0] || email;
+      keys.add(normalizeMentionToken(emailKey));
+    }
+    if (name) {
+      keys.add(normalizeMentionToken(name));
+      const parts = name.split(/\s+/).filter(Boolean);
+      if (parts[0]) keys.add(normalizeMentionToken(parts[0]));
+      if (parts.length > 1) keys.add(normalizeMentionToken(parts[parts.length - 1]));
+    }
+    for (const key of Array.from(keys)) {
+      if (key && tokens.has(key)) {
+        mentionedIds.add(member.id);
+        break;
+      }
+    }
+  });
+
+  return Array.from(mentionedIds);
+}
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
@@ -1140,6 +1181,45 @@ export async function registerRoutes(
         userId: req.user.id,
         content: input.content,
       });
+      const allUsers = await storage.getUsers();
+      const participantIds = getTaskParticipantIds(task);
+      const mentionedIds = extractMentionedUserIds(input.content, allUsers);
+
+      const mentionRecipients = new Set<number>();
+      mentionedIds.forEach((id) => {
+        const mentionedUser = allUsers.find((u) => u.id === id);
+        if (!mentionedUser) return;
+        if (isAdminUser(mentionedUser) || participantIds.includes(id)) {
+          mentionRecipients.add(id);
+        }
+      });
+      mentionRecipients.delete(req.user.id);
+
+      const participantRecipients = new Set<number>(
+        participantIds.filter((id) => id !== req.user.id),
+      );
+      mentionRecipients.forEach((id) => participantRecipients.delete(id));
+
+      if (participantRecipients.size > 0) {
+        await emitNotification(participantRecipients, {
+          title: "New comment",
+          description: `${req.user.name} commented on "${task.title}".`,
+          actorUserId: req.user.id,
+          type: "task_comment",
+          entityType: "task",
+          entityId: taskId,
+        });
+      }
+      if (mentionRecipients.size > 0) {
+        await emitNotification(mentionRecipients, {
+          title: "You were mentioned",
+          description: `${req.user.name} mentioned you in "${task.title}".`,
+          actorUserId: req.user.id,
+          type: "task_comment_mention",
+          entityType: "task",
+          entityId: taskId,
+        });
+      }
       res.status(201).json(comment);
     } catch (err) {
       if (err instanceof z.ZodError) {
@@ -1491,7 +1571,7 @@ async function seedDatabase() {
     if (existingUsers.length === 0) {
       const admin = await storage.createUser({
         name: "Admin User",
-        email: "admin@example.com",
+        email: "admin@hiqain.com",
         designation: "Administrator",
         password: "password",
         role: "admin",
@@ -1500,7 +1580,16 @@ async function seedDatabase() {
       console.log(`✅ Created admin user with ID: ${admin.id}, password hash: ${admin.password}`);
       console.log("✅ Database seeded with users and tasks!");
     } else {
-      console.log("ℹ️ Users already exist; skipping seed.");
+      const legacyAdmin = existingUsers.find(
+        (member) =>
+          member.role === "admin" && member.email.trim().toLowerCase() === "admin@example.com",
+      );
+      if (legacyAdmin) {
+        await storage.updateUser(legacyAdmin.id, { email: "admin@hiqain.com" });
+        console.log("✅ Updated legacy admin email to admin@hiqain.com");
+      } else {
+        console.log("ℹ️ Users already exist; skipping seed.");
+      }
     }
   } catch (e) {
     const err = e as NodeJS.ErrnoException;

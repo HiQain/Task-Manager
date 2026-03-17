@@ -350,7 +350,9 @@ export default function Users() {
                   </TableCell>
                 </TableRow>
               ) : (
-                filteredUsers.map((member) => (
+                filteredUsers.map((member) => {
+                  const storageAllowed = member.role === "admin" ? true : !!member.allowStorage;
+                  return (
                   <TableRow key={member.id} className="group hover:bg-muted/20">
                     <TableCell>
                       <div className="flex items-center gap-3">
@@ -382,11 +384,11 @@ export default function Users() {
                     <TableCell>
                       <Badge
                         variant="outline"
-                        className={member.allowStorage
+                        className={storageAllowed
                           ? "text-emerald-700 bg-emerald-50 border-emerald-100"
                           : "text-slate-600 bg-slate-50 border-slate-100"}
                       >
-                        {member.allowStorage ? "Allowed" : "Blocked"}
+                        {storageAllowed ? "Allowed" : "Blocked"}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right">
@@ -398,17 +400,20 @@ export default function Users() {
                       >
                         <Pencil className="w-4 h-4" />
                       </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                        onClick={() => handleDelete(member.id, member.name)}
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
+                      {member.role !== "admin" && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                          onClick={() => handleDelete(member.id, member.name)}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      )}
                     </TableCell>
                   </TableRow>
-                ))
+                  );
+                })
               )}
             </TableBody>
           </Table>

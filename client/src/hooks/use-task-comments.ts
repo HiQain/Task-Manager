@@ -13,7 +13,7 @@ async function readJsonOrThrow(res: Response, fallbackMessage: string) {
   return body;
 }
 
-export function useTaskComments(taskId?: number, enabled = true) {
+export function useTaskComments(taskId?: number, enabled = true, refetchInterval?: number | false) {
   return useQuery({
     queryKey: ["tasks", taskId, "comments"],
     queryFn: async () => {
@@ -24,6 +24,7 @@ export function useTaskComments(taskId?: number, enabled = true) {
       return api.tasks.comments.list.responses[200].parse(body);
     },
     enabled: !!taskId && enabled,
+    refetchInterval,
   });
 }
 
