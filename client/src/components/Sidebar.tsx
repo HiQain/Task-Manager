@@ -416,6 +416,7 @@ export function Sidebar({
   // User only sees tasks for drag & drop
   const userNavItems = [
     { label: "Hiqain Board", icon: Kanban, href: "/board" },
+    { label: "List View", icon: ListTodo, href: "/list" },
     { label: "Members", icon: Users, href: "/members" },
     { label: "Reminder", icon: AlarmClock, href: "/reminder" },
     { label: "Chat", icon: MessageSquare, href: "/chat" },

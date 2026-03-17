@@ -59,7 +59,7 @@ export default function AdminConsole() {
                                         <td className="py-3 px-4">{user.email}</td>
                                         <td className="py-3 px-4">
                                             <Badge variant={user.role === 'admin' ? 'default' : 'outline'}>
-                                                {user.role}
+                                                {user.role === 'admin' ? 'Admin' : 'Employee'}
                                             </Badge>
                                         </td>
                                         <td className="py-3 px-4 text-sm text-muted-foreground">
@@ -85,13 +85,13 @@ export default function AdminConsole() {
                         <div className="text-2xl font-bold">
                             {users.filter((u: any) => u.role === 'admin').length}
                         </div>
-                        <p className="text-sm text-muted-foreground mt-1">Administrators</p>
+                        <p className="text-sm text-muted-foreground mt-1">Admins</p>
                     </div>
                     <div className="text-center p-4 bg-muted rounded-lg">
                         <div className="text-2xl font-bold">
                             {users.filter((u: any) => u.role === 'user').length}
                         </div>
-                        <p className="text-sm text-muted-foreground mt-1">Regular Users</p>
+                        <p className="text-sm text-muted-foreground mt-1">Employees</p>
                     </div>
                 </div>
             </Card>

@@ -176,12 +176,12 @@ function Layout({ children }: { children: React.ReactNode }) {
             <button
               type="button"
               onClick={() => setLocation("/profile")}
-              className="flex items-center gap-2 text-left md:text-right min-w-0 rounded-md px-2 py-1 hover:bg-muted transition-colors"
+              className="flex items-center gap-2 text-left min-w-0 rounded-md px-2 py-1 hover:bg-muted transition-colors"
             >
               <Avatar className="h-8 w-8">
                 <AvatarFallback className="text-xs font-semibold">{userInitials}</AvatarFallback>
               </Avatar>
-              <div>
+              <div className="flex flex-col items-start">
                 <p className="text-sm font-medium text-foreground truncate">{user.name}</p>
                 <p className="text-xs text-muted-foreground capitalize">{user.role}</p>
               </div>

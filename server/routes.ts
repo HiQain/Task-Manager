@@ -1719,7 +1719,7 @@ async function seedDatabase() {
     const existingUsers = await storage.getUsers();
     if (existingUsers.length === 0) {
       const admin = await storage.createUser({
-        name: "Admin User",
+        name: "admin",
         email: "admin@hiqain.com",
         designation: "Administrator",
         password: "password",
