@@ -553,10 +553,10 @@ export function Sidebar({
       <div className="hidden md:flex w-64 border-r border-border/40 bg-card/50 backdrop-blur-sm h-screen flex-col fixed left-0 top-0 pt-6 px-4">
         <div className="px-2 mb-8 flex items-center gap-2">
           <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center overflow-hidden">
-            <img src="/favicon.png" alt="TaskFlow" className="w-9 h-9 object-contain rounded-lg" />
+            <img src="/favicon.png" alt="Task Manager" className="w-9 h-9 object-contain rounded-lg" />
           </div>
           <span className="font-display font-bold text-xl tracking-tight text-foreground">
-            TaskFlow
+            Task Manager
           </span>
         </div>
         {renderNavSection()}
@@ -567,10 +567,10 @@ export function Sidebar({
           <SheetTitle className="sr-only">Navigation</SheetTitle>
           <div className="px-2 mb-6 flex items-center gap-2">
             <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center overflow-hidden">
-              <img src="/favicon.png" alt="TaskFlow" className="w-10 h-10 object-contain" />
+              <img src="/favicon.png" alt="Task Manager" className="w-10 h-10 object-contain" />
             </div>
             <span className="font-display font-bold text-xl tracking-tight text-foreground">
-              TaskFlow
+              Task Manager
             </span>
           </div>
           {renderNavSection()}

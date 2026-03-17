@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ChevronLeft, Download, Eye, FileText, Loader2, Mic, MicOff, Paperclip, Phone, PhoneOff, Search, Send, X } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Download, Eye, FileText, Loader2, Mic, MicOff, Paperclip, Phone, PhoneOff, Search, Send, X } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useChatUsers, useMarkChatRead, useMarkTaskGroupRead, useMessages, useSendMessage, useSendTaskGroupMessage, useTaskGroupMessages, useTaskGroupUnreadCounts, useTaskGroups, useUnreadCounts } from "@/hooks/use-chat";
 import { useUsers } from "@/hooks/use-users";
@@ -196,6 +196,7 @@ export default function Chat() {
   const [previewAttachment, setPreviewAttachment] = useState<PreviewAttachment | null>(null);
   const [duplicatePromptFileName, setDuplicatePromptFileName] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [isGroupSectionOpen, setIsGroupSectionOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
@@ -1143,37 +1144,46 @@ export default function Chat() {
         <div className="p-2 space-y-1 overflow-y-auto flex-1 min-h-0">
           {filteredTaskGroups.length > 0 && (
             <>
-              <p className="px-3 pt-1 pb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              <button
+                type="button"
+                onClick={() => setIsGroupSectionOpen((prev) => !prev)}
+                className="w-full flex items-center gap-2 px-3 pt-1 pb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground"
+              >
+                {isGroupSectionOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
                 Task Groups
-              </p>
-              {filteredTaskGroups.map((entry) => {
-                const task = entry.task;
-                const isActive = task.id === activeTaskGroupId;
-                const membersCount = entry.participantIds.length;
-                const unread = taskGroupUnreadCounts?.byTask?.[String(task.id)] || 0;
-                return (
-                  <button
-                    key={`group-${task.id}`}
-                    onClick={() => handleSelectTaskGroup(task.id)}
-                    className={`w-full text-left px-3 py-2.5 rounded-lg transition-colors flex items-center gap-2 ${isActive ? "bg-primary/10 text-primary" : "hover:bg-muted text-foreground"
-                      }`}
-                  >
-                    <div className="h-7 w-7 rounded-md border border-primary/15 bg-primary/5 flex items-center justify-center text-[11px] font-semibold text-primary">
-                      #
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium truncate">{task.title}</p>
-                      <p className="text-[11px] text-muted-foreground">{membersCount} members</p>
-                    </div>
-                    {unread > 0 && (
-                      <span className="ml-auto min-w-5 h-5 px-1 rounded-full bg-destructive text-destructive-foreground text-[10px] font-semibold flex items-center justify-center">
-                        {unread > 99 ? "99+" : unread}
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-              <div className="my-2 h-px bg-border/60" />
+              </button>
+              {isGroupSectionOpen && (
+                <>
+                  {filteredTaskGroups.map((entry) => {
+                    const task = entry.task;
+                    const isActive = task.id === activeTaskGroupId;
+                    const membersCount = entry.participantIds.length;
+                    const unread = taskGroupUnreadCounts?.byTask?.[String(task.id)] || 0;
+                    return (
+                      <button
+                        key={`group-${task.id}`}
+                        onClick={() => handleSelectTaskGroup(task.id)}
+                        className={`w-full text-left px-3 py-2.5 rounded-lg transition-colors flex items-center gap-2 ${isActive ? "bg-primary/10 text-primary" : "hover:bg-muted text-foreground"
+                          }`}
+                      >
+                        <div className="h-7 w-7 rounded-md border border-primary/15 bg-primary/5 flex items-center justify-center text-[11px] font-semibold text-primary">
+                          #
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium truncate">{task.title}</p>
+                          <p className="text-[11px] text-muted-foreground">{membersCount} members</p>
+                        </div>
+                        {unread > 0 && (
+                          <span className="ml-auto min-w-5 h-5 px-1 rounded-full bg-destructive text-destructive-foreground text-[10px] font-semibold flex items-center justify-center">
+                            {unread > 99 ? "99+" : unread}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                  <div className="my-2 h-px bg-border/60" />
+                </>
+              )}
             </>
           )}
 

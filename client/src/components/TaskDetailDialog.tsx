@@ -102,7 +102,7 @@ export function TaskDetailDialog({ open, onOpenChange, task }: Props) {
     return "user";
   };
 
-  const mentionCandidates = (users || [])
+  const mentionCandidates = (assignedUsers || [])
     .filter((member) => member.id !== user?.id)
     .filter((member) => {
       if (!mentionQuery) return true;
@@ -312,8 +312,13 @@ export function TaskDetailDialog({ open, onOpenChange, task }: Props) {
                           }
                         }}
                       />
-                      {isMentionOpen && mentionCandidates.length > 0 && (
-                        <div className="absolute z-10 mt-1 w-full rounded-md border bg-background shadow-md">
+                      {isMentionOpen && (
+                        <div className="absolute z-20 bottom-full mb-2 w-full rounded-md border bg-background shadow-md max-h-48 overflow-y-auto">
+                          {mentionCandidates.length === 0 && (
+                            <div className="px-3 py-2 text-xs text-muted-foreground">
+                              No assigned users found.
+                            </div>
+                          )}
                           {mentionCandidates.map((member) => {
                             const label = getMentionLabel(member);
                             return (

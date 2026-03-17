@@ -392,6 +392,24 @@ export async function registerRoutes(
           const toUserId = Number(payload?.toUserId);
           if (!Number.isFinite(toUserId) || toUserId === userId) return;
 
+          const signalType = payload?.signal?.type;
+          if (signalType === "offer") {
+            const targetSockets = wsClientsByUserId.get(toUserId);
+            const isTargetOnline = !!targetSockets && targetSockets.size > 0;
+            const targetActivePairs = activeChatPairsByUserId.get(toUserId);
+            const isTargetInActiveChat = !!targetActivePairs && (targetActivePairs.get(userId) || 0) > 0;
+            if (!isTargetOnline || !isTargetInActiveChat) {
+              const caller = await storage.getUser(userId);
+              const callerName = caller?.name || "Someone";
+              void sendPushToUser(toUserId, {
+                title: "Incoming call",
+                body: `${callerName} is calling you.`,
+                url: `/chat?userId=${userId}`,
+                tag: `call-${userId}`,
+              });
+            }
+          }
+
           emitToUser(toUserId, {
             type: "webrtc:signal",
             payload: {
