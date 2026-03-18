@@ -16,6 +16,7 @@ declare module "express-session" {
 }
 
 const activeSessionByUserId = new Map<number, string>();
+const pendingCallsByUserId = new Map<number, { fromUserId: number; signal: any; createdAt: number }>();
 
 declare global {
   namespace Express {
@@ -384,6 +385,24 @@ export async function registerRoutes(
       );
     }
 
+    const pendingCall = pendingCallsByUserId.get(userId);
+    if (pendingCall && socket.readyState === WebSocket.OPEN) {
+      const isFresh = Date.now() - pendingCall.createdAt < 35_000;
+      if (isFresh) {
+        socket.send(
+          JSON.stringify({
+            type: "webrtc:signal",
+            payload: {
+              fromUserId: pendingCall.fromUserId,
+              signal: pendingCall.signal,
+            },
+          }),
+        );
+      } else {
+        pendingCallsByUserId.delete(userId);
+      }
+    }
+
     socket.on("message", async (raw) => {
       try {
         const parsed = JSON.parse(String(raw || "{}"));
@@ -410,6 +429,15 @@ export async function registerRoutes(
                 tag: `call-${userId}`,
               });
             }
+            pendingCallsByUserId.set(toUserId, {
+              fromUserId: userId,
+              signal: payload?.signal,
+              createdAt: Date.now(),
+            });
+          }
+
+          if (signalType === "answer" || signalType === "decline" || signalType === "hangup") {
+            pendingCallsByUserId.delete(userId);
           }
 
           emitToUser(toUserId, {

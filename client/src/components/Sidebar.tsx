@@ -54,6 +54,8 @@ export function Sidebar({
   const remoteStreamRef = useRef<MediaStream | null>(null);
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
   const queuedCandidatesRef = useRef<RTCIceCandidateInit[]>([]);
+  const ringtoneIntervalRef = useRef<number | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
   const showBrowserNotification = (
     title: string,
     options?: { body?: string; tag?: string },
@@ -110,10 +112,55 @@ export function Sidebar({
     setConnectedPeerUserId(null);
     setCallStartedAt(null);
     setCallDurationSec(0);
+    stopRinging();
     try {
       sessionStorage.removeItem(PENDING_CALL_STORAGE_KEY);
     } catch {
       // ignore session storage errors
+    }
+  };
+
+  const playBeep = (frequency = 920, durationMs = 220) => {
+    try {
+      const AudioCtx = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioCtx) return;
+      if (!audioCtxRef.current) {
+        audioCtxRef.current = new AudioCtx();
+      }
+      const ctx = audioCtxRef.current;
+      if (ctx.state === "suspended") {
+        void ctx.resume();
+      }
+      const oscillator = ctx.createOscillator();
+      const gain = ctx.createGain();
+      oscillator.type = "sine";
+      oscillator.frequency.value = frequency;
+      gain.gain.value = 0.03;
+      oscillator.connect(gain);
+      gain.connect(ctx.destination);
+      oscillator.start();
+      window.setTimeout(() => {
+        oscillator.stop();
+        oscillator.disconnect();
+        gain.disconnect();
+      }, durationMs);
+    } catch {
+      // Ignore browser audio restrictions
+    }
+  };
+
+  const startRinging = () => {
+    if (ringtoneIntervalRef.current) return;
+    playBeep(920, 220);
+    ringtoneIntervalRef.current = window.setInterval(() => {
+      playBeep(920, 220);
+    }, 1400);
+  };
+
+  const stopRinging = () => {
+    if (ringtoneIntervalRef.current) {
+      window.clearInterval(ringtoneIntervalRef.current);
+      ringtoneIntervalRef.current = null;
     }
   };
 
@@ -243,6 +290,21 @@ export function Sidebar({
     }, 1000);
     return () => window.clearInterval(intervalId);
   }, [isInCall, callStartedAt]);
+
+  useEffect(() => {
+    if (!incomingCall || isCallConnecting || isInCall) {
+      stopRinging();
+      return;
+    }
+    startRinging();
+    const ensureRing = () => startRinging();
+    window.addEventListener("pointerdown", ensureRing, { once: true });
+    window.addEventListener("keydown", ensureRing, { once: true });
+    return () => {
+      window.removeEventListener("pointerdown", ensureRing);
+      window.removeEventListener("keydown", ensureRing);
+    };
+  }, [incomingCall, isCallConnecting, isInCall]);
 
   useEffect(() => {
     if (!user?.id) return;

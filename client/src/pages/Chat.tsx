@@ -464,6 +464,17 @@ export default function Chat() {
     }
   }, []);
 
+  useEffect(() => {
+    if (!incomingCallFromUserId || isInCall) return;
+    const ensureRing = () => startRinging("incoming");
+    window.addEventListener("pointerdown", ensureRing, { once: true });
+    window.addEventListener("keydown", ensureRing, { once: true });
+    return () => {
+      window.removeEventListener("pointerdown", ensureRing);
+      window.removeEventListener("keydown", ensureRing);
+    };
+  }, [incomingCallFromUserId, isInCall]);
+
   const sendActiveRoom = useCallback((targetUserId?: number) => {
     const socket = wsRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) return;

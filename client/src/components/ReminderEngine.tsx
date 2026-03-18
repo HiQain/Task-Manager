@@ -232,6 +232,9 @@ export function ReminderEngine() {
     }
 
     startRing();
+    const ensureRing = () => startRing();
+    window.addEventListener("pointerdown", ensureRing, { once: true });
+    window.addEventListener("keydown", ensureRing, { once: true });
     const dueKey = dueReminders.map((item) => item.id).join("|");
     if (lastDueKeyRef.current !== dueKey) {
       lastDueKeyRef.current = dueKey;
@@ -240,6 +243,10 @@ export function ReminderEngine() {
         description: `${dueReminders.length} reminder${dueReminders.length > 1 ? "s are" : " is"} due.`,
       });
     }
+    return () => {
+      window.removeEventListener("pointerdown", ensureRing);
+      window.removeEventListener("keydown", ensureRing);
+    };
   }, [dueReminders, toast]);
 
   if (dueReminders.length === 0) {
