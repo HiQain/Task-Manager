@@ -20,10 +20,12 @@ type IncomingCallState = {
 
 export function Sidebar({
   onNewTask,
+  onLogout,
   mobileOpen,
   onMobileOpenChange,
 }: {
   onNewTask: () => void;
+  onLogout: () => void;
   mobileOpen: boolean;
   onMobileOpenChange: (open: boolean) => void;
 }) {
@@ -455,7 +457,7 @@ export function Sidebar({
                 `}
               >
                 <item.icon className="w-4 h-4" />
-                <span>{item.label}</span>
+                <span className="whitespace-nowrap">{item.label}</span>
                 {item.href === "/chat" && totalUnread > 0 && (
                   <span className="ml-auto min-w-5 h-5 px-1 rounded-full bg-destructive text-destructive-foreground text-[10px] font-semibold flex items-center justify-center">
                     {totalUnread > 99 ? "99+" : totalUnread}
@@ -493,7 +495,7 @@ export function Sidebar({
                     `}
                   >
                     <item.icon className="w-4 h-4" />
-                    {item.label}
+                    <span className="whitespace-nowrap">{item.label}</span>
                   </div>
                 </Link>
               );
@@ -515,6 +517,16 @@ export function Sidebar({
         >
           <Plus className="w-4 h-4" />
           New Task
+        </Button>
+        <Button
+          variant="destructive"
+          onClick={() => {
+            closeMobileSidebar();
+            onLogout();
+          }}
+          className="w-full justify-start gap-2 mt-3 mb-4"
+        >
+          Logout
         </Button>
       </div>
     </>
@@ -556,7 +568,7 @@ export function Sidebar({
       )}
       <audio ref={remoteAudioRef} autoPlay />
 
-      <div className="hidden md:flex w-64 border-r border-border/40 bg-card/50 backdrop-blur-sm h-screen flex-col fixed left-0 top-0 pt-6 px-4">
+      <div className="hidden md:flex w-64 border-r border-border/40 bg-card/50 backdrop-blur-sm h-screen flex-col fixed left-0 top-0 pt-6 px-4 overflow-hidden">
         <div className="px-2 mb-8 flex items-center gap-2">
           <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center overflow-hidden">
             <img src="/favicon.png" alt="TaskFlow" className="w-9 h-9 object-contain rounded-lg" />
@@ -565,7 +577,9 @@ export function Sidebar({
             TaskFlow
           </span>
         </div>
-        {renderNavSection()}
+        <div className="flex-1 min-h-0 overflow-y-auto pr-1">
+          {renderNavSection()}
+        </div>
       </div>
 
       <Sheet open={mobileOpen} onOpenChange={onMobileOpenChange}>
@@ -579,7 +593,9 @@ export function Sidebar({
               TaskFlow
             </span>
           </div>
-          {renderNavSection()}
+          <div className="flex-1 min-h-0 overflow-y-auto pr-1">
+            {renderNavSection()}
+          </div>
         </SheetContent>
       </Sheet>
     </>

@@ -150,6 +150,10 @@ function Layout({ children }: { children: React.ReactNode }) {
     <div className="min-h-screen bg-background font-sans flex">
       <Sidebar
         onNewTask={() => setIsDialogOpen(true)}
+        onLogout={() => {
+          logout();
+          window.location.href = "/login";
+        }}
         mobileOpen={isMobileSidebarOpen}
         onMobileOpenChange={setIsMobileSidebarOpen}
       />
@@ -185,15 +189,6 @@ function Layout({ children }: { children: React.ReactNode }) {
                 <p className="text-sm font-medium text-foreground truncate">{user.name}</p>
                 <p className="text-xs text-muted-foreground capitalize">{user.role}</p>
               </div>
-            </button>
-            <button
-              onClick={() => {
-                logout();
-                window.location.href = '/login';
-              }}
-              className="px-3 md:px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg text-sm font-medium transition-colors"
-            >
-              Logout
             </button>
           </div>
         </header>
