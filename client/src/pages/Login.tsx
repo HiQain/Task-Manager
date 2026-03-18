@@ -54,10 +54,15 @@ export default function Login() {
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 flex items-center justify-center p-4">
-            <Card className="w-full max-w-md">
+            <Card className="w-full max-w-md shadow-[0_30px_120px_-20px_rgba(15,23,42,0.75)] ring-1 ring-white/20">
                 <div className="p-8">
                     {/* Header */}
                     <div className="text-center mb-8">
+                        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-white/90" style={{
+                            boxShadow: '0 1px 2px 0 rgb(0 0 0 / 1)'
+                        }}>
+                            <img src="/favicon.png" alt="TaskFlow" className="h-9 w-9 object-contain" />
+                        </div>
                         <h1 className="text-3xl font-bold mb-2">TaskFlow</h1>
                         <p className="text-gray-500">Sign in to your account</p>
                     </div>
