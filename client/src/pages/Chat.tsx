@@ -1527,6 +1527,13 @@ export default function Chat() {
             <Input
               value={draft}
               onChange={(e) => handleDraftChange(e.target.value)}
+              onPaste={(e) => {
+                const files = e.clipboardData?.files;
+                if (files && files.length > 0) {
+                  e.preventDefault();
+                  void handleAttachmentSelect(files);
+                }
+              }}
               placeholder={showConversationPanel ? (isActiveUserDeleted ? "This user is deleted (read-only chat)" : "Type a message...") : "Select user or task group first"}
               disabled={!showConversationPanel || isActiveUserDeleted || sendPending}
               className="h-11"

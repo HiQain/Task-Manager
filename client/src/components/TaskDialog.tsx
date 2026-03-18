@@ -77,6 +77,23 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
   const assignedToIds = form.watch("assignedToIds") || [];
   const selectedDueDate = parseInputDateValue(dueDate);
 
+  const appendAttachments = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const readFile = (file: File) => new Promise<{ name: string; data: string; type: string; reason?: string }>((res, rej) => {
+      const reader = new FileReader();
+      reader.onload = () => res({ name: file.name, data: String(reader.result), type: file.type, reason: "" });
+      reader.onerror = rej;
+      reader.readAsDataURL(file);
+    });
+    const current = (form.getValues("attachments") as any[]) || [];
+    const next = [...current];
+    for (const file of Array.from(files)) {
+      const item = await readFile(file);
+      next.push(item);
+    }
+    form.setValue("attachments" as any, next as any);
+  };
+
   const parseAttachments = (raw: unknown): any[] => {
     if (Array.isArray(raw)) return raw;
     if (typeof raw === "string") {
@@ -368,7 +385,16 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
                   />
                 </div>
 
-                <div className="space-y-2">
+                <div
+                  className="space-y-2"
+                  onPaste={(e) => {
+                    const files = e.clipboardData?.files;
+                    if (files && files.length > 0) {
+                      e.preventDefault();
+                      void appendAttachments(files);
+                    }
+                  }}
+                >
                   <FormLabel>Attachments</FormLabel>
                   {/* Hidden single-file input; use button to trigger for one-at-a-time selection */}
                   <input
@@ -377,18 +403,8 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
                     className="hidden"
                     ref={(el) => (fileInputRef.current = el)}
                     onChange={async (e) => {
-                      const file = e.target.files && e.target.files[0];
-                      if (!file) return;
-                      const readFile = (file: File) => new Promise<{ name: string; data: string; type: string; reason?: string }>((res, rej) => {
-                        const reader = new FileReader();
-                        reader.onload = () => res({ name: file.name, data: String(reader.result), type: file.type, reason: "" });
-                        reader.onerror = rej;
-                        reader.readAsDataURL(file);
-                      });
                       try {
-                        const item = await readFile(file);
-                        const current = (form.getValues("attachments") as any[]) || [];
-                        form.setValue("attachments" as any, [...current, item] as any);
+                        await appendAttachments(e.target.files);
                       } finally {
                         // reset input so same file can be selected again if needed
                         if (fileInputRef.current) fileInputRef.current.value = "";
