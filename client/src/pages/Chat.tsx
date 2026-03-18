@@ -218,6 +218,12 @@ export default function Chat() {
   const [callDurationSec, setCallDurationSec] = useState(0);
   const [presenceByUserId, setPresenceByUserId] = useState<Record<number, { isOnline: boolean; lastSeenAt: string | null }>>({});
   const [typingByUserId, setTypingByUserId] = useState<Record<number, boolean>>({});
+
+  useEffect(() => {
+    if (activeTaskGroupId !== undefined && activeTaskGroupId !== null) {
+      setIsGroupSectionOpen(true);
+    }
+  }, [activeTaskGroupId]);
   const isCallingRef = useRef(false);
   const isInCallRef = useRef(false);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -1151,6 +1157,9 @@ export default function Chat() {
               >
                 {isGroupSectionOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
                 Task Groups
+                {(taskGroupUnreadCounts?.total || 0) > 0 && (
+                  <span className="ml-auto h-2 w-2 rounded-full bg-destructive" />
+                )}
               </button>
               {isGroupSectionOpen && (
                 <>

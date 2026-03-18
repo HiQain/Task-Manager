@@ -858,7 +858,7 @@ export async function registerRoutes(
       (sum, project) => sum + project.files.reduce((fileSum, file) => fileSum + (Number(file.size) || 0), 0),
       0,
     );
-    const quotaBytes = Math.max(1, Number(process.env.STORAGE_QUOTA_BYTES || 1024 * 1024 * 1024));
+    const quotaBytes = Math.max(1, Number(process.env.STORAGE_QUOTA_BYTES || 2 * 1024 * 1024 * 1024));
 
     res.json({
       projects: projectsWithFiles,

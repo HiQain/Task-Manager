@@ -416,7 +416,7 @@ export default function Storage() {
           <CardHeader>
             <CardTitle className="text-base">Projects</CardTitle>
             <p className="text-xs text-muted-foreground">
-              Used by app: {formatBytes(usedBytes)} of {formatBytes(quotaBytes)} ({formatQuotaPercent(usedBytes, quotaBytes)})
+              Used by app: {formatBytes(usedBytes)}
             </p>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -452,7 +452,7 @@ export default function Storage() {
                         <p className="text-sm font-medium truncate">{project.name}</p>
                         <p className="text-xs text-muted-foreground mt-1">{(project.files || []).length} files</p>
                         <p className="text-xs text-muted-foreground mt-1">
-                          {formatBytes(projectUsedBytes)} of {formatBytes(quotaBytes)} ({formatQuotaPercent(projectUsedBytes, quotaBytes)} of quota)
+                          {formatBytes(projectUsedBytes)}
                         </p>
                       </button>
                       <div className="shrink-0 relative w-9 h-9" title={`${formatQuotaPercent(projectUsedBytes, quotaBytes)} of quota`}>
