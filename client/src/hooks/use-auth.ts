@@ -37,7 +37,11 @@ export function useAuth(): AuthContextType {
                 return null;
             }
         },
-        staleTime: 1000 * 60 * 5, // 5 minutes
+        staleTime: 0,
+        refetchInterval: 2000,
+        refetchOnWindowFocus: true,
+        refetchOnReconnect: true,
+        refetchOnMount: "always",
         retry: false,
     });
 

@@ -15,6 +15,8 @@ declare module "express-session" {
   }
 }
 
+const activeSessionByUserId = new Map<number, string>();
+
 declare global {
   namespace Express {
     interface Request {
@@ -518,8 +520,17 @@ export async function registerRoutes(
   // Auth middleware to attach user to request
   app.use((req, res, next) => {
     if (req.session.userId) {
+      const activeSessionId = activeSessionByUserId.get(req.session.userId);
+      if (activeSessionId && activeSessionId !== req.sessionID) {
+        req.session.destroy(() => {
+          // ignore destroy errors
+        });
+        req.user = undefined;
+        return next();
+      }
       storage.getUser(req.session.userId).then((user) => {
         if (user && isDeletedUser(user)) {
+          activeSessionByUserId.delete(req.session.userId as number);
           req.session.userId = undefined;
           req.user = undefined;
           return next();
@@ -546,7 +557,15 @@ export async function registerRoutes(
         return res.status(401).json({ message: "Invalid email or password" });
       }
 
+      const existingSessionId = activeSessionByUserId.get(user.id);
+      if (existingSessionId && existingSessionId !== req.sessionID) {
+        req.sessionStore.destroy(existingSessionId, () => {
+          // ignore destroy errors
+        });
+      }
+
       req.session.userId = user.id;
+      activeSessionByUserId.set(user.id, req.sessionID);
       res.json(user);
     } catch (err) {
       if (err instanceof z.ZodError) {
@@ -560,6 +579,12 @@ export async function registerRoutes(
   });
 
   app.post(api.auth.logout.path, (req, res) => {
+    if (req.session.userId) {
+      const activeSessionId = activeSessionByUserId.get(req.session.userId);
+      if (activeSessionId === req.sessionID) {
+        activeSessionByUserId.delete(req.session.userId);
+      }
+    }
     req.session.destroy((err) => {
       if (err) {
         return res.status(500).json({ message: "Logout failed" });
