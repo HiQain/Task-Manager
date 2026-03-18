@@ -8,7 +8,7 @@ import { useUsers } from "@/hooks/use-users";
 import { useCreateTaskComment, useTaskComments } from "@/hooks/use-task-comments";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/hooks/use-auth";
-import { formatTaskDescription } from "@/lib/utils";
+import { formatTaskDescription, formatShortDate, parseDateOnly } from "@/lib/utils";
 import { useEffect, useState } from "react";
 
 interface Props {
@@ -243,7 +243,10 @@ export function TaskDetailDialog({ open, onOpenChange, task }: Props) {
                 <div className="flex items-center gap-2">
                   <CalendarClock className="w-3 h-3" />
                   <span className={task.dueDate ? "text-destructive font-medium" : ""}>
-                    Due: {task.dueDate ? new Date(task.dueDate).toLocaleDateString() : "Not set"}
+                    Due: {(() => {
+                      const parsed = parseDateOnly(task.dueDate as any);
+                      return parsed ? formatShortDate(parsed) : "Not set";
+                    })()}
                   </span>
                 </div>
               </div>

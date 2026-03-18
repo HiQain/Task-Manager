@@ -15,8 +15,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Loader2, Pencil, Trash2, CalendarDays, User as UserIcon } from "lucide-react";
-import { formatTaskDescription } from "@/lib/utils";
-import { format } from "date-fns";
+import { formatShortDate, formatTaskDescription, parseDateOnly } from "@/lib/utils";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useAuth } from "@/hooks/use-auth";
 
@@ -258,7 +257,10 @@ export default function ListView() {
           <TableCell className="hidden lg:table-cell">
             <div className="flex items-center text-xs text-muted-foreground">
               <CalendarDays className="w-3 h-3 mr-1.5" />
-              {task.createdAt ? format(new Date(task.createdAt), "MMM d, yyyy") : "-"}
+              {(() => {
+                const parsedDueDate = parseDateOnly(task.dueDate as any);
+                return parsedDueDate ? formatShortDate(parsedDueDate) : "-";
+              })()}
             </div>
           </TableCell>
           <TableCell className="text-right">

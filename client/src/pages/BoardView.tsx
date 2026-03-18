@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useLocation } from "wouter";
 import { useEnsureTaskGroup } from "@/hooks/use-chat";
+import { parseDateOnly } from "@/lib/utils";
 
 const COLUMNS = [
   { id: "todo", title: "To Do", color: "bg-slate-500" },
@@ -170,8 +171,8 @@ export default function BoardView() {
       const now = new Date();
       const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
       const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-      const dueDate = task.dueDate ? new Date(task.dueDate as any) : null;
-      const hasDueDate = !!dueDate && !Number.isNaN(dueDate.getTime());
+      const dueDate = parseDateOnly(task.dueDate as any);
+      const hasDueDate = !!dueDate;
       const dueTime = hasDueDate ? dueDate.getTime() : null;
       const startOfTodayTime = startOfToday.getTime();
       const endOfTodayTime = endOfToday.getTime();

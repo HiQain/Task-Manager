@@ -12,7 +12,7 @@ import {
 import { useUsers } from "@/hooks/use-users";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useAuth } from "@/hooks/use-auth";
-import { formatTaskDescription } from "@/lib/utils";
+import { formatTaskDescription, formatShortDate, parseDateOnly } from "@/lib/utils";
 
 interface TaskCardProps {
   task: Task;
@@ -33,13 +33,8 @@ const priorityColors = {
 
 function formatDueDate(value?: string | Date | null): string {
   if (!value) return "-";
-  const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime())) return "-";
-
-  const day = date.getDate();
-  const month = date.toLocaleString("en-US", { month: "short" }).toLowerCase();
-  const year = date.getFullYear();
-  return `${day}/${month}/${year}`;
+  const date = parseDateOnly(value);
+  return formatShortDate(date);
 }
 
 export function TaskCard({ task, index, canEdit, canMove, onEdit, onDelete, onView, onMessage }: TaskCardProps) {

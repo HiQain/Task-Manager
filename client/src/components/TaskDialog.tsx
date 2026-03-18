@@ -10,16 +10,41 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, User as UserIcon } from "lucide-react";
+import { Calendar } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Loader2, User as UserIcon, CalendarDays } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useEnsureTaskGroup } from "@/hooks/use-chat";
 import { RichTextEditor } from "@/components/RichTextEditor";
+import { formatShortDate, parseDateOnly } from "@/lib/utils";
 
 interface TaskDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   task?: Task | null;
 }
+
+const toInputDateValue = (date: Date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+const parseInputDateValue = (value?: string) => {
+  if (!value) return undefined;
+  const [yearStr, monthStr, dayStr] = value.split("-");
+  const year = Number(yearStr);
+  const month = Number(monthStr);
+  const day = Number(dayStr);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return undefined;
+  return new Date(year, month - 1, day);
+};
+
+const startOfToday = () => {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+};
 
 export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
   const { toast } = useToast();
@@ -50,6 +75,7 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
   const attachments = form.watch("attachments") || [];
   const dueDate = form.watch("dueDate");
   const assignedToIds = form.watch("assignedToIds") || [];
+  const selectedDueDate = parseInputDateValue(dueDate);
 
   const parseAttachments = (raw: unknown): any[] => {
     if (Array.isArray(raw)) return raw;
@@ -117,7 +143,8 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
 
   useEffect(() => {
     if (task) {
-      const formattedDueDate = task.dueDate ? new Date(task.dueDate).toISOString().split("T")[0] : undefined;
+      const parsedDueDate = parseDateOnly(task.dueDate as any);
+      const formattedDueDate = parsedDueDate ? toInputDateValue(parsedDueDate) : undefined;
       const normalizedAttachments = parseAttachments(task.attachments).map((a: any) => ({
         ...(typeof a === "string"
           ? { name: a, data: a, type: a.startsWith("data:image") ? "image/*" : "file" }
@@ -411,14 +438,38 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
 
                 </div>
 
-                <div>
+                <div className="space-y-2">
                   <FormLabel>Due Date</FormLabel>
-                  <input
-                    type="date"
-                    value={dueDate || ""}
-                    onChange={(e) => form.setValue("dueDate" as any, e.target.value || undefined)}
-                    className="h-10 rounded-md border px-2 w-full"
-                  />
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button type="button" variant="outline" className="w-full justify-between">
+                        <span className={dueDate ? "text-foreground" : "text-muted-foreground"}>
+                          {selectedDueDate ? formatShortDate(selectedDueDate) : "Pick a due date"}
+                        </span>
+                        <CalendarDays className="h-4 w-4 text-muted-foreground" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-4 bg-background border shadow-xl" align="start">
+                      <Calendar
+                        mode="single"
+                        selected={selectedDueDate}
+                        onSelect={(date) =>
+                          form.setValue("dueDate" as any, date ? toInputDateValue(date) : undefined, {
+                            shouldDirty: true,
+                            shouldTouch: true,
+                          })
+                        }
+                        disabled={{ before: startOfToday() }}
+                      />
+                    </PopoverContent>
+                  </Popover>
+                  {selectedDueDate ? (
+                    <p className="text-xs text-muted-foreground">
+                      Selected: {formatShortDate(selectedDueDate)}
+                    </p>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">Pick a date for the task due date.</p>
+                  )}
                 </div>
               </form>
             </Form>
