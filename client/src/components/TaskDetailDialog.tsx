@@ -159,16 +159,16 @@ export function TaskDetailDialog({ open, onOpenChange, task }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[calc(100vw-1.5rem)] sm:w-full sm:max-w-[1100px] max-h-[88vh] p-0 overflow-hidden border-border fixed !top-1/2 !left-1/2 !-translate-x-1/2 !-translate-y-1/2">
+      <DialogContent className="w-[calc(100vw-1.5rem)] sm:w-full sm:max-w-[1100px] max-h-[92vh] p-0 overflow-hidden border-border fixed !top-1/2 !left-1/2 !-translate-x-1/2 !-translate-y-1/2">
         <DialogHeader>
-          <div className="p-6 border-b">
+          <div className="p-5 sm:p-6 border-b bg-muted/10">
             <DialogTitle className="text-xl font-display">{task.title}</DialogTitle>
           </div>
         </DialogHeader>
 
-        <div className="p-6 max-h-[72vh] overflow-y-auto">
-          <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-5">
-            <div className="space-y-5">
+        <div className="p-5 sm:p-6 h-[calc(92vh-80px)] overflow-hidden">
+          <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-5 min-h-0 h-full">
+            <div className="space-y-4 overflow-y-auto pr-1 lg:pr-3 h-full">
               <div>
                 <p className="text-xs text-muted-foreground mb-1">Description</p>
                 <p className="text-sm whitespace-pre-line break-words">
@@ -177,11 +177,11 @@ export function TaskDetailDialog({ open, onOpenChange, task }: Props) {
               </div>
 
               <div className="grid grid-cols-2 gap-3">
-                <div className="rounded-lg border p-3 bg-muted/20">
+                <div className="rounded-lg border p-3 bg-muted/10">
                   <p className="text-xs text-muted-foreground mb-2">Status</p>
                   <Badge variant="outline">{statusLabel}</Badge>
                 </div>
-                <div className="rounded-lg border p-3 bg-muted/20">
+                <div className="rounded-lg border p-3 bg-muted/10">
                   <p className="text-xs text-muted-foreground mb-2">Priority</p>
                   <Badge variant="outline" className={`capitalize ${priorityClass}`}>
                     {task.priority}
@@ -189,7 +189,7 @@ export function TaskDetailDialog({ open, onOpenChange, task }: Props) {
                 </div>
               </div>
 
-              <div className="rounded-lg border p-3 bg-muted/20">
+              <div className="rounded-lg border p-3 bg-muted/10">
                 <p className="text-xs text-muted-foreground mb-2">Assigned To</p>
                 {assignedUsers.length > 0 ? (
                   <div className="space-y-2">
@@ -219,13 +219,13 @@ export function TaskDetailDialog({ open, onOpenChange, task }: Props) {
               {attachments.length > 0 && (
                 <div>
                   <p className="text-xs text-muted-foreground mb-2">Attachments</p>
-                  <div className="space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
                     {attachments.map((a: any, i: number) => (
                       <div key={i} className="border rounded-lg p-3 bg-background">
                         {typeof a === "string" ? (
                           a.startsWith("data:image") ? (
                             // eslint-disable-next-line @next/next/no-img-element
-                            <img src={a} alt={`att-${i}`} className="object-cover w-24 h-24 rounded border" />
+                            <img src={a} alt={`att-${i}`} className="object-cover w-full h-24 rounded border" />
                           ) : (
                             <a href={a} className="text-sm underline underline-offset-2">
                               Open
@@ -234,7 +234,7 @@ export function TaskDetailDialog({ open, onOpenChange, task }: Props) {
                         ) : a.type?.startsWith("image/") ? (
                           <div className="flex flex-col gap-2">
                             {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={a.data} alt={a.name} className="object-cover w-24 h-24 rounded border" />
+                            <img src={a.data} alt={a.name} className="object-cover w-full h-24 rounded border" />
                           </div>
                         ) : (
                           <a href={a.data} download={a.name} className="text-sm underline underline-offset-2">
@@ -266,8 +266,8 @@ export function TaskDetailDialog({ open, onOpenChange, task }: Props) {
                 </div>
               </div>
             </div>
-            <div className="lg:sticky lg:top-0 lg:self-start space-y-3">
-              <div className="rounded-lg border bg-muted/20 p-3">
+            <div className="lg:sticky lg:top-3 lg:self-start space-y-3 min-h-0">
+              <div className="rounded-lg border bg-muted/10 p-3 min-h-0">
                 <div className="flex items-center justify-between mb-2">
                   <div>
                     <p className="text-sm font-medium">Comments</p>
@@ -284,7 +284,7 @@ export function TaskDetailDialog({ open, onOpenChange, task }: Props) {
                 {commentsLoading ? (
                   <p className="text-xs text-muted-foreground">Loading comments...</p>
                 ) : comments && comments.length > 0 ? (
-                  <div className="space-y-2 max-h-[38vh] overflow-y-auto pr-1">
+                  <div className="space-y-2 max-h-[30vh] overflow-y-auto pr-1">
                     {filteredComments.length === 0 ? (
                       <p className="text-xs text-muted-foreground">No matching comments.</p>
                     ) : filteredComments.map((comment) => {
