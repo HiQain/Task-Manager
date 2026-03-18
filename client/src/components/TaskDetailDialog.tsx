@@ -9,7 +9,7 @@ import { useCreateTaskComment, useTaskComments } from "@/hooks/use-task-comments
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/hooks/use-auth";
 import { formatTaskDescription, formatShortDate, parseDateOnly } from "@/lib/utils";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 interface Props {
   open: boolean;
@@ -21,6 +21,7 @@ export function TaskDetailDialog({ open, onOpenChange, task }: Props) {
   const { data: users } = useUsers();
   const { user } = useAuth();
   const [commentText, setCommentText] = useState("");
+  const [commentSearch, setCommentSearch] = useState("");
   const [mentionQuery, setMentionQuery] = useState("");
   const [isMentionOpen, setIsMentionOpen] = useState(false);
   const taskId = task?.id ?? 0;
@@ -31,10 +32,24 @@ export function TaskDetailDialog({ open, onOpenChange, task }: Props) {
   useEffect(() => {
     if (!open) {
       setCommentText("");
+      setCommentSearch("");
       setMentionQuery("");
       setIsMentionOpen(false);
     }
   }, [open, task?.id]);
+
+  const filteredComments = useMemo(() => {
+    if (!comments || comments.length === 0) return [];
+    const normalized = commentSearch.trim().toLowerCase();
+    if (!normalized) return comments;
+    return comments.filter((comment) => {
+      const author = users?.find((u) => u.id === comment.userId);
+      const authorText = `${author?.name || ""} ${author?.email || ""}`.toLowerCase();
+      const contentText = String(comment.content || "").toLowerCase();
+      return `${authorText} ${contentText}`.includes(normalized);
+    });
+  }, [commentSearch, comments, users]);
+
   if (!task) return null;
 
   const rawAssignedToIds = (task as any).assignedToIds;
@@ -259,12 +274,20 @@ export function TaskDetailDialog({ open, onOpenChange, task }: Props) {
                     <p className="text-xs text-muted-foreground">Use @ to mention users.</p>
                   </div>
                 </div>
+                <Input
+                  value={commentSearch}
+                  onChange={(e) => setCommentSearch(e.target.value)}
+                  placeholder="Search comments..."
+                  className="h-8 text-xs mb-3"
+                />
 
                 {commentsLoading ? (
                   <p className="text-xs text-muted-foreground">Loading comments...</p>
                 ) : comments && comments.length > 0 ? (
                   <div className="space-y-2 max-h-[38vh] overflow-y-auto pr-1">
-                    {comments.map((comment) => {
+                    {filteredComments.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">No matching comments.</p>
+                    ) : filteredComments.map((comment) => {
                       const author = users?.find((u) => u.id === comment.userId);
                       return (
                         <div key={comment.id} className="rounded-md border border-border/60 p-3 bg-background">
