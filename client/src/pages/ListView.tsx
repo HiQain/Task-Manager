@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState, type DragEvent } from "react";
 import { useTasks, useDeleteTask, useUpdateTask } from "@/hooks/use-tasks";
 import { useUsers } from "@/hooks/use-users";
 import { TaskDialog } from "@/components/TaskDialog";
@@ -15,7 +15,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Loader2, Pencil, RotateCcw, Trash2, CalendarDays, User as UserIcon } from "lucide-react";
+import { Loader2, Pencil, RotateCcw, Trash2, CalendarDays, GripVertical, User as UserIcon } from "lucide-react";
 import { formatShortDate, formatTaskDescription, parseDateOnly } from "@/lib/utils";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useAuth } from "@/hooks/use-auth";
@@ -260,23 +260,26 @@ export default function ListView() {
     const priorityLabel = typeof task.priority === "string" && task.priority.length > 0
       ? task.priority
       : "medium";
+    const dragStartProps = {
+      draggable: true,
+      onDragStart: (e: DragEvent<HTMLElement>) => {
+        setDraggingId(task.id);
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", String(task.id));
+      },
+      onDragEnd: () => {
+        setDraggingId(null);
+        setDragOverId(null);
+        setDragOverRoot(false);
+      },
+    };
 
     return (
       <Fragment key={task.id}>
         <TableRow
           key={task.id}
           className={`group hover:bg-muted/20 transition-colors ${draggingId === task.id ? "opacity-60" : ""} ${dragOverId === task.id ? "bg-primary/10" : ""}`}
-          draggable
-          onDragStart={(e) => {
-            setDraggingId(task.id);
-            e.dataTransfer.effectAllowed = "move";
-            e.dataTransfer.setData("text/plain", String(task.id));
-          }}
-          onDragEnd={() => {
-            setDraggingId(null);
-            setDragOverId(null);
-            setDragOverRoot(false);
-          }}
+          {...dragStartProps}
           onDragOver={(e) => {
             e.preventDefault();
             e.dataTransfer.dropEffect = "move";
@@ -287,8 +290,11 @@ export default function ListView() {
           }}
           onDrop={() => handleDropOnTask(task.id)}
         >
-          <TableCell>
+          <TableCell {...dragStartProps}>
             <div className="flex items-start gap-2" style={{ paddingLeft: `${depth * 16}px` }}>
+              <span className="mt-0.5 text-muted-foreground/60">
+                <GripVertical className="w-4 h-4" />
+              </span>
               {children.length > 0 && (
                 <button
                   type="button"
@@ -310,7 +316,7 @@ export default function ListView() {
               </div>
             </div>
           </TableCell>
-          <TableCell>
+          <TableCell {...dragStartProps}>
             {assignedUsers.length > 0 ? (
               <div className="flex items-center gap-2">
                 <div className="flex -space-x-1">
@@ -334,17 +340,17 @@ export default function ListView() {
               </div>
             )}
           </TableCell>
-          <TableCell>
+          <TableCell {...dragStartProps}>
             <Badge variant="outline" className={`capitalize font-medium ${getStatusColor(task.status || "todo")}`}>
               {statusLabel}
             </Badge>
           </TableCell>
-          <TableCell className="hidden md:table-cell">
+          <TableCell className="hidden md:table-cell" {...dragStartProps}>
             <Badge variant="outline" className={`capitalize font-medium ${getPriorityColor(priorityLabel)}`}>
               {priorityLabel}
             </Badge>
           </TableCell>
-          <TableCell className="hidden lg:table-cell">
+          <TableCell className="hidden lg:table-cell" {...dragStartProps}>
             <div className="flex items-center text-xs text-muted-foreground">
               <CalendarDays className="w-3 h-3 mr-1.5" />
               {(() => {
@@ -353,7 +359,7 @@ export default function ListView() {
               })()}
             </div>
           </TableCell>
-          <TableCell className="text-right">
+          <TableCell className="text-right" {...dragStartProps}>
             {canEdit ? (
               <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                 <Button
