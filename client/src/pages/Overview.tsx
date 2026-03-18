@@ -269,7 +269,9 @@ export default function Overview() {
                     </p>
                   </div>
                   <div className="ml-auto text-xs text-muted-foreground capitalize">
-                    {task.status.replace('_', ' ')}
+                    {typeof task.status === "string" && task.status.length > 0
+                      ? task.status.replace("_", " ")
+                      : "todo"}
                   </div>
                 </div>
               ))}

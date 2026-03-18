@@ -84,14 +84,6 @@ export default function ListView() {
     }
   };
 
-  if (isLoading) {
-    return (
-      <div className="h-full flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-      </div>
-    );
-  }
-
   const baseVisibleTasks = (tasks || []).filter((task) => {
     if (user?.role === "admin") return true;
     if (!user?.id) return false;
@@ -106,6 +98,7 @@ export default function ListView() {
       const assignedToIds = getAssignedToIds(task);
       const normalizedSearch = searchQuery.trim().toLowerCase();
       const taskText = `${task.title} ${task.description || ""}`.toLowerCase();
+      const taskPriority = typeof task.priority === "string" && task.priority.length > 0 ? task.priority : "medium";
 
       const now = new Date();
       const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -117,7 +110,7 @@ export default function ListView() {
       const endOfTodayTime = endOfToday.getTime();
 
       if (normalizedSearch && !taskText.includes(normalizedSearch)) return false;
-      if (priorityFilter !== "all" && task.priority !== priorityFilter) return false;
+      if (priorityFilter !== "all" && taskPriority !== priorityFilter) return false;
 
       if (ownershipFilter === "created_by_me") {
         if (!user?.id || task.createdById !== user.id) return false;
@@ -172,6 +165,14 @@ export default function ListView() {
     setAssigneeFilter("all");
     setDueFilter("all");
   };
+
+  if (isLoading) {
+    return (
+      <div className="h-full flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
 
   const taskMap = new Map(visibleTasks.map((task) => [task.id, task]));
   const childrenByParent = new Map<number | null, Task[]>();
@@ -253,6 +254,12 @@ export default function ListView() {
     const assignedUsers = users?.filter(u => assignedToIds.includes(u.id)) || [];
     const children = childrenByParent.get(task.id) || [];
     const isCollapsed = collapsedIds.has(task.id);
+    const statusLabel = typeof task.status === "string" && task.status.length > 0
+      ? task.status.replace("_", " ")
+      : "todo";
+    const priorityLabel = typeof task.priority === "string" && task.priority.length > 0
+      ? task.priority
+      : "medium";
 
     return (
       <Fragment key={task.id}>
@@ -328,13 +335,13 @@ export default function ListView() {
             )}
           </TableCell>
           <TableCell>
-            <Badge variant="outline" className={`capitalize font-medium ${getStatusColor(task.status)}`}>
-              {task.status.replace('_', ' ')}
+            <Badge variant="outline" className={`capitalize font-medium ${getStatusColor(task.status || "todo")}`}>
+              {statusLabel}
             </Badge>
           </TableCell>
           <TableCell className="hidden md:table-cell">
-            <Badge variant="outline" className={`capitalize font-medium ${getPriorityColor(task.priority)}`}>
-              {task.priority}
+            <Badge variant="outline" className={`capitalize font-medium ${getPriorityColor(priorityLabel)}`}>
+              {priorityLabel}
             </Badge>
           </TableCell>
           <TableCell className="hidden lg:table-cell">
