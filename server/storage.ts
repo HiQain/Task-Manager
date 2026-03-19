@@ -294,7 +294,7 @@ export class DatabaseStorage implements IStorage {
 
   // Tasks Implementation
   async getTasks(): Promise<Task[]> {
-    const rows = await db.select().from(tasks).orderBy(tasks.createdAt);
+    const rows = await db.select().from(tasks).orderBy(asc(tasks.sortOrder), asc(tasks.createdAt));
     return rows.map((r: any) => {
       let attachments = [];
       try { attachments = JSON.parse(r.attachments || '[]'); } catch { attachments = []; }
@@ -338,8 +338,18 @@ export class DatabaseStorage implements IStorage {
       if (!isNaN(d.getTime())) dueDateVal = d;
       else dueDateVal = null;
     }
+    const [lastTask] = await db
+      .select()
+      .from(tasks)
+      .orderBy(desc(tasks.sortOrder), desc(tasks.createdAt))
+      .limit(1);
+    const nextSortOrder = typeof (insertTask as any).sortOrder === "number"
+      ? (insertTask as any).sortOrder
+      : ((lastTask as any)?.sortOrder ?? 0) + 1024;
+
     const toInsert: any = {
       ...insertTask,
+      sortOrder: nextSortOrder,
       assignedToId,
       assignedToIds: JSON.stringify(assignedToIds),
       attachments: attachmentsJson,

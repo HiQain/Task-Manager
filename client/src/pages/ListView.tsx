@@ -48,6 +48,34 @@ const StrictModeDroppable = ({ children, ...props }: DroppableProps) => {
   return <Droppable {...props}>{children}</Droppable>;
 };
 
+const moveItemInOrder = (
+  order: number[],
+  startIndex: number,
+  endIndex: number,
+) => {
+  const next = [...order];
+  const [removed] = next.splice(startIndex, 1);
+  next.splice(endIndex, 0, removed);
+  return next;
+};
+
+const areNumberArraysEqual = (a: number[], b: number[]) => (
+  a.length === b.length && a.every((value, index) => value === b[index])
+);
+
+const getParentTaskId = (task: Task | null | undefined) => {
+  const rawParentId = (task as any)?.parentTaskId;
+  return typeof rawParentId === "number" && Number.isFinite(rawParentId) ? rawParentId : null;
+};
+
+const moveTaskAfterTarget = (order: number[], taskId: number, targetId: number) => {
+  const next = order.filter((id) => id !== taskId);
+  const targetIndex = next.indexOf(targetId);
+  if (targetIndex === -1) return [...next, taskId];
+  next.splice(targetIndex + 1, 0, taskId);
+  return next;
+};
+
 export default function ListView() {
   const { data: tasks, isLoading } = useTasks();
   const { data: users } = useUsers();
@@ -55,7 +83,7 @@ export default function ListView() {
   const deleteTask = useDeleteTask();
   const updateTask = useUpdateTask();
   const { toast } = useToast();
-  
+
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [collapsedIds, setCollapsedIds] = useState<Set<number>>(new Set());
@@ -65,6 +93,7 @@ export default function ListView() {
   const [ownershipFilter, setOwnershipFilter] = useState("all");
   const [assigneeFilter, setAssigneeFilter] = useState("all");
   const [dueFilter, setDueFilter] = useState("all");
+  const [taskOrder, setTaskOrder] = useState<number[]>([]);
 
   const handleDelete = (id: number) => {
     if (confirm("Are you sure you want to delete this task?")) {
@@ -165,6 +194,16 @@ export default function ListView() {
     }
   }, [assigneeFilter, filterUserOptions]);
 
+  useEffect(() => {
+    const visibleIds = visibleTasks.map((task) => task.id);
+    setTaskOrder((prev) => {
+      const prevVisibleIds = prev.filter((id) => visibleIds.includes(id));
+      const missingIds = visibleIds.filter((id) => !prevVisibleIds.includes(id));
+      const next = [...prevVisibleIds, ...missingIds];
+      return areNumberArraysEqual(prev, next) ? prev : next;
+    });
+  }, [visibleTasks]);
+
   const resetFilters = () => {
     setSearchQuery("");
     setPriorityFilter("all");
@@ -182,6 +221,7 @@ export default function ListView() {
   }
 
   const taskMap = new Map(visibleTasks.map((task) => [task.id, task]));
+  const taskOrderIndex = new Map(taskOrder.map((id, index) => [id, index]));
   const childrenByParent = new Map<number | null, Task[]>();
   visibleTasks.forEach((task) => {
     const rawParentId = (task as any).parentTaskId;
@@ -190,6 +230,13 @@ export default function ListView() {
     const list = childrenByParent.get(normalizedParentId) || [];
     list.push(task);
     childrenByParent.set(normalizedParentId, list);
+  });
+  childrenByParent.forEach((list) => {
+    list.sort((a, b) => {
+      const aIndex = taskOrderIndex.get(a.id) ?? Number.MAX_SAFE_INTEGER;
+      const bIndex = taskOrderIndex.get(b.id) ?? Number.MAX_SAFE_INTEGER;
+      return aIndex - bIndex;
+    });
   });
 
   const rootTasks = childrenByParent.get(null) || [];
@@ -244,25 +291,41 @@ export default function ListView() {
   const onDragEnd = (result: DropResult) => {
     setIsDragging(false);
 
-    const { destination, draggableId } = result;
-    if (!destination) return;
+    const { destination, combine, draggableId, source } = result;
+    if (!destination && !combine) return;
 
     const taskId = Number(draggableId.replace("task-", ""));
     if (!Number.isFinite(taskId)) return;
 
-    const destinationId = destination.droppableId;
-    let targetId: number | null = null;
+    let nextParentId: number | null = null;
+    let nextOrder = taskOrder;
 
-    if (destinationId.startsWith("root-")) {
-      targetId = null;
-    } else if (destinationId === "task-list") {
-      const target = orderedRows[destination.index]?.task;
-      targetId = target ? target.id : null;
+    if (combine) {
+      const combineTaskId = Number(combine.draggableId.replace("task-", ""));
+      if (!Number.isFinite(combineTaskId)) return;
+      nextParentId = combineTaskId;
+      nextOrder = moveTaskAfterTarget(taskOrder, taskId, combineTaskId);
+    } else {
+      if (!destination) return;
+      nextOrder = moveItemInOrder(taskOrder, source.index, destination.index);
+
+      if (destination.droppableId.startsWith("root-")) {
+        nextParentId = null;
+      } else {
+        const reorderedRows = nextOrder
+          .map((id) => taskMap.get(id))
+          .filter((task): task is Task => !!task);
+        const targetTask = reorderedRows[destination.index];
+        const targetParentId = typeof (targetTask as any)?.parentTaskId === "number"
+          ? (targetTask as any).parentTaskId
+          : null;
+        nextParentId = targetParentId;
+      }
     }
 
-    if (targetId === taskId) return;
-    if (targetId !== null && !Number.isFinite(targetId)) return;
-    if (targetId !== null && isDescendant(taskId, targetId)) {
+    if (nextParentId === taskId) return;
+    if (nextParentId !== null && !Number.isFinite(nextParentId)) return;
+    if (nextParentId !== null && isDescendant(taskId, nextParentId)) {
       toast({
         title: "Invalid move",
         description: "You cannot move a task into its own sub-task.",
@@ -289,14 +352,52 @@ export default function ListView() {
     const currentParentId = typeof (draggedTask as any)?.parentTaskId === "number"
       ? (draggedTask as any).parentTaskId
       : null;
-    if (currentParentId === targetId) return;
 
-    updateTask.mutate({
-      id: taskId,
-      parentTaskId: targetId,
+    setTaskOrder(nextOrder);
+
+    if (
+      currentParentId === nextParentId &&
+      (!destination || (source.droppableId === destination.droppableId && source.index === destination.index))
+    ) return;
+
+    const nextParentByTaskId = new Map<number, number | null>();
+    visibleTasks.forEach((task) => {
+      nextParentByTaskId.set(task.id, getParentTaskId(task));
+    });
+    nextParentByTaskId.set(taskId, nextParentId);
+
+    const changedParentIds = Array.from(new Set([currentParentId, nextParentId]));
+    const updatesToPersist = new Map<number, { id: number; parentTaskId?: number | null; sortOrder?: number }>();
+
+    changedParentIds.forEach((parentId) => {
+      const siblingIds = nextOrder.filter((id) => nextParentByTaskId.get(id) === parentId);
+      siblingIds.forEach((siblingId, index) => {
+        const existingTask = taskMap.get(siblingId);
+        if (!existingTask) return;
+        const desiredSortOrder = (index + 1) * 1024;
+        const existingSortOrder = typeof (existingTask as any).sortOrder === "number"
+          ? (existingTask as any).sortOrder
+          : 0;
+        const existingParentId = getParentTaskId(existingTask);
+
+        if (existingSortOrder !== desiredSortOrder || existingParentId !== parentId) {
+          const prev = updatesToPersist.get(siblingId) || { id: siblingId };
+          updatesToPersist.set(siblingId, {
+            ...prev,
+            parentTaskId: parentId,
+            sortOrder: desiredSortOrder,
+          });
+        }
+      });
     });
 
-    if (targetId === null) {
+    if (updatesToPersist.size === 0) return;
+
+    updatesToPersist.forEach((payload) => {
+      updateTask.mutate(payload);
+    });
+
+    if (nextParentId === null) {
       const descendants = getDescendants(taskId);
       descendants.forEach((child) => {
         updateTask.mutate({
@@ -509,7 +610,10 @@ export default function ListView() {
                     <div
                       ref={provided.innerRef}
                       {...provided.droppableProps}
-                      className={`border-b px-4 py-2 text-xs transition-colors ${snapshot.isDraggingOver ? "bg-primary/10 text-muted-foreground" : "text-transparent"} ${isDragging ? "pointer-events-auto" : "pointer-events-none"}`}
+                      className={`border-b px-4 py-2 text-xs transition-colors ${isDragging ? "pointer-events-auto" : "pointer-events-none"} ${snapshot.isDraggingOver
+                        ? "bg-primary/10 text-muted-foreground"
+                        : "text-transparent"
+                        }`}
                     >
                       Drop here to make it a top-level task
                       {provided.placeholder}
@@ -517,10 +621,7 @@ export default function ListView() {
                   )}
                 </StrictModeDroppable>
 
-                <StrictModeDroppable
-                  droppableId="task-list"
-                  type="TASK"
-                >
+                <StrictModeDroppable droppableId="task-list" type="TASK" isCombineEnabled>
                   {(listProvided) => (
                     <div ref={listProvided.innerRef} {...listProvided.droppableProps}>
                       {orderedRows.map(({ task, depth }, index) => {
@@ -554,22 +655,36 @@ export default function ListView() {
                         return (
                           <Draggable draggableId={rowId} index={index} key={task.id}>
                             {(provided, snapshot) => (
-                              <div
-                                ref={provided.innerRef}
-                                {...provided.draggableProps}
-                                {...provided.dragHandleProps}
-                                style={provided.draggableProps.style}
-                                className={`group grid grid-cols-[minmax(220px,1.6fr)_minmax(170px,1fr)_minmax(120px,0.7fr)_minmax(110px,0.6fr)_minmax(140px,0.7fr)_minmax(120px,0.5fr)] items-center gap-3 border-b px-4 py-3 transition-colors ${snapshot.isDragging ? "bg-muted/40 shadow-lg" : "hover:bg-muted/20"}`}
-                              >
-                                {renderRowContent(
-                                  task,
-                                  depth,
-                                  assignedUsers,
-                                  children.length > 0,
-                                  isCollapsed,
-                                  statusLabel,
-                                  priorityLabel,
-                                  canEdit,
+                              <div ref={provided.innerRef} style={provided.draggableProps.style} className="relative">
+                                <div
+                                  {...provided.draggableProps}
+                                  {...provided.dragHandleProps}
+                                  className={`group grid grid-cols-[minmax(220px,1.6fr)_minmax(170px,1fr)_minmax(120px,0.7fr)_minmax(110px,0.6fr)_minmax(140px,0.7fr)_minmax(120px,0.5fr)] items-center gap-3 border-b px-4 py-3 transition-colors ${snapshot.isDragging
+                                    ? "bg-muted/40 shadow-lg"
+                                    : "hover:bg-muted/20"
+                                    } ${snapshot.combineTargetFor
+                                      ? "bg-primary/10"
+                                      : ""
+                                    }`}
+                                >
+                                  {renderRowContent(
+                                    task,
+                                    depth,
+                                    assignedUsers,
+                                    children.length > 0,
+                                    isCollapsed,
+                                    statusLabel,
+                                    priorityLabel,
+                                    canEdit,
+                                  )}
+                                </div>
+
+                                {snapshot.combineTargetFor && !snapshot.isDragging && (
+                                  <div className="pointer-events-none absolute inset-x-0 top-1/2 z-30 flex -translate-y-1/2 justify-center px-4">
+                                    <span className="rounded bg-background px-2 py-1 text-[11px] font-medium text-primary shadow-sm">
+                                      Drop to make sub-task
+                                    </span>
+                                  </div>
                                 )}
                               </div>
                             )}
@@ -586,7 +701,10 @@ export default function ListView() {
                     <div
                       ref={provided.innerRef}
                       {...provided.droppableProps}
-                      className={`px-4 py-2 text-xs transition-colors ${snapshot.isDraggingOver ? "bg-primary/10 text-muted-foreground" : "text-transparent"} ${isDragging && orderedRows.length > 0 ? "pointer-events-auto" : "pointer-events-none"}`}
+                      className={`px-4 py-2 text-xs transition-colors ${isDragging && orderedRows.length > 0 ? "pointer-events-auto" : "pointer-events-none"} ${snapshot.isDraggingOver
+                        ? "bg-primary/10 text-muted-foreground"
+                        : "text-transparent"
+                        }`}
                     >
                       Drop here to make it a top-level task
                       {provided.placeholder}
@@ -598,8 +716,8 @@ export default function ListView() {
           </div>
         </div>
 
-        <TaskDialog 
-          open={isDialogOpen} 
+        <TaskDialog
+          open={isDialogOpen}
           onOpenChange={(open) => {
             setIsDialogOpen(open);
             if (!open) setEditingTask(null);
