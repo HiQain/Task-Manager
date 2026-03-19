@@ -43,6 +43,8 @@ export default function Users() {
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string } | null>(null);
   const [search, setSearch] = useState("");
   const [editingUserId, setEditingUserId] = useState<number | null>(null);
+  const [isCsvUploading, setIsCsvUploading] = useState(false);
+  const [csvFile, setCsvFile] = useState<File | null>(null);
   const [editForm, setEditForm] = useState({
     name: "",
     email: "",
@@ -167,6 +169,100 @@ export default function Users() {
         description: error instanceof Error ? error.message : "Something went wrong",
         variant: "destructive",
       });
+    }
+  };
+
+  const parseCsv = (text: string) => {
+    const lines = text.split(/\r?\n/).filter((line) => line.trim().length > 0);
+    if (lines.length === 0) return { rows: [], errors: ["CSV is empty."] };
+
+    const headers = lines[0].split(",").map((h) => h.trim());
+    const required = ["name", "email", "designation", "role", "allowStorage", "password"];
+    const missing = required.filter((key) => !headers.includes(key));
+    if (missing.length > 0) {
+      return { rows: [], errors: [`Missing columns: ${missing.join(", ")}`] };
+    }
+
+    const rows = lines.slice(1).map((line, idx) => {
+      const cols = line.split(",").map((c) => c.trim());
+      const row: Record<string, string> = {};
+      headers.forEach((h, i) => {
+        row[h] = cols[i] ?? "";
+      });
+      return { row, line: idx + 2 };
+    });
+
+    return { rows, errors: [] as string[] };
+  };
+
+  const handleCsvUpload = async () => {
+    if (!csvFile) return;
+    setIsCsvUploading(true);
+    try {
+      const text = await csvFile.text();
+      const parsed = parseCsv(text);
+      if (parsed.errors.length > 0) {
+        toast({
+          title: "CSV error",
+          description: parsed.errors.join(" "),
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const failures: string[] = [];
+      let successCount = 0;
+      for (const item of parsed.rows) {
+        const { row, line } = item;
+        const name = (row.name || "").trim();
+        const email = (row.email || "").trim();
+        const designation = (row.designation || "").trim();
+        const roleRaw = (row.role || "user").trim().toLowerCase();
+        const role = roleRaw === "employee" ? "user" : roleRaw;
+        const allowStorage = (row.allowStorage || "false").trim().toLowerCase() === "true";
+        const password = (row.password || "").trim();
+
+        if (!name || !email || !designation || !password) {
+          failures.push(`Line ${line}: missing required fields.`);
+          continue;
+        }
+        if (role !== "admin" && role !== "user") {
+          failures.push(`Line ${line}: role must be admin or employee.`);
+          continue;
+        }
+
+        try {
+          await createUser.mutateAsync({
+            name,
+            email,
+            designation,
+            password,
+            role: role as "user" | "admin",
+            allowStorage: role === "admin" ? true : allowStorage,
+          });
+          successCount += 1;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Failed to create user";
+          failures.push(`Line ${line}: ${message}`);
+        }
+      }
+
+      if (failures.length > 0) {
+        toast({
+          title: "Upload completed with errors",
+          description: `${successCount} created, ${failures.length} failed. ${failures.slice(0, 3).join(" ")}`,
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Upload complete",
+          description: `${successCount} users created.`,
+        });
+      }
+
+      setCsvFile(null);
+    } finally {
+      setIsCsvUploading(false);
     }
   };
 
@@ -320,14 +416,34 @@ export default function Users() {
 
       <div className="bg-card rounded-xl border border-border shadow-sm overflow-hidden">
         <div className="p-4 border-b border-border/60">
-          <div className="relative max-w-sm">
-            <Search className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
-            <Input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search by name, email, designation, role..."
-              className="h-10 pl-9 bg-background"
-            />
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="relative max-w-sm w-full">
+              <Search className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
+              <Input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search by name, email, designation, role..."
+                className="h-10 pl-9 bg-background"
+              />
+            </div>
+            <div className="flex items-center gap-3">
+              <label className="text-sm font-medium text-muted-foreground">Upload CSV</label>
+              <Input
+                type="file"
+                accept=".csv"
+                className="h-10 w-full lg:w-[260px]"
+                onChange={(e) => setCsvFile(e.target.files?.[0] || null)}
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-10"
+                onClick={handleCsvUpload}
+                disabled={!csvFile || isCsvUploading}
+              >
+                {isCsvUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Upload"}
+              </Button>
+            </div>
           </div>
         </div>
         <div className="overflow-x-auto">
@@ -400,7 +516,7 @@ export default function Users() {
                       >
                         <Pencil className="w-4 h-4" />
                       </Button>
-                      {member.role !== "admin" && (
+                      {member.email.toLowerCase() !== "admin@hiqain.com" && (
                         <Button
                           variant="ghost"
                           size="icon"

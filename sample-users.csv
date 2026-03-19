@@ -1,0 +1,3 @@
+name,email,designation,role,allowStorage,password
+Ali Raza,ali@example.com,Project Manager,admin,true,Admin@123
+Sara Khan,sara@example.com,Designer,employee,false,User@123
