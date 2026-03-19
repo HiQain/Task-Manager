@@ -1,17 +1,10 @@
-import { Fragment, useEffect, useMemo, useState, type DragEvent } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { DragDropContext, Droppable, Draggable, type DropResult, type DroppableProps } from "@hello-pangea/dnd";
 import { useTasks, useDeleteTask, useUpdateTask } from "@/hooks/use-tasks";
 import { useUsers } from "@/hooks/use-users";
 import { TaskDialog } from "@/components/TaskDialog";
 import { type Task } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
-import { 
-  Table, 
-  TableBody, 
-  TableCell, 
-  TableHead, 
-  TableHeader, 
-  TableRow 
-} from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -39,6 +32,22 @@ function getAssignedToIds(task: Task): number[] {
   return assignedToIds;
 }
 
+const StrictModeDroppable = ({ children, ...props }: DroppableProps) => {
+  const [enabled, setEnabled] = useState(false);
+
+  useEffect(() => {
+    const animation = requestAnimationFrame(() => setEnabled(true));
+    return () => {
+      cancelAnimationFrame(animation);
+      setEnabled(false);
+    };
+  }, []);
+
+  if (!enabled) return null;
+
+  return <Droppable {...props}>{children}</Droppable>;
+};
+
 export default function ListView() {
   const { data: tasks, isLoading } = useTasks();
   const { data: users } = useUsers();
@@ -50,9 +59,7 @@ export default function ListView() {
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [collapsedIds, setCollapsedIds] = useState<Set<number>>(new Set());
-  const [draggingId, setDraggingId] = useState<number | null>(null);
-  const [dragOverId, setDragOverId] = useState<number | null>(null);
-  const [dragOverRoot, setDragOverRoot] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [priorityFilter, setPriorityFilter] = useState("all");
   const [ownershipFilter, setOwnershipFilter] = useState("all");
@@ -199,30 +206,17 @@ export default function ListView() {
     return false;
   };
 
-  const handleDropOnTask = (targetId: number | null) => {
-    if (!draggingId) return;
-    if (targetId === draggingId) return;
-    if (targetId !== null && isDescendant(draggingId, targetId)) {
-      toast({
-        title: "Invalid move",
-        description: "You cannot move a task into its own sub-task.",
-        variant: "destructive",
-      });
-      return;
+  const getDescendants = (ancestorId: number) => {
+    const descendants: Task[] = [];
+    const stack = [...(childrenByParent.get(ancestorId) || [])];
+    while (stack.length > 0) {
+      const current = stack.pop();
+      if (!current) continue;
+      descendants.push(current);
+      const next = childrenByParent.get(current.id) || [];
+      stack.push(...next);
     }
-    const draggedTask = taskMap.get(draggingId);
-    const currentParentId = typeof (draggedTask as any)?.parentTaskId === "number"
-      ? (draggedTask as any).parentTaskId
-      : null;
-    if (currentParentId === targetId) return;
-
-    updateTask.mutate({
-      id: draggingId,
-      parentTaskId: targetId,
-    });
-    setDraggingId(null);
-    setDragOverId(null);
-    setDragOverRoot(false);
+    return descendants;
   };
 
   const toggleCollapse = (taskId: number) => {
@@ -234,163 +228,192 @@ export default function ListView() {
     });
   };
 
-  const renderRows = (task: Task, depth: number) => {
-    const canEdit = !!user?.id && task.createdById === user.id;
-    const rawAssignedToIds = (task as any).assignedToIds;
-    let assignedToIds: number[] = [];
-    if (Array.isArray(rawAssignedToIds)) {
-      assignedToIds = rawAssignedToIds.map((id: any) => Number(id)).filter((id: number) => Number.isFinite(id));
-    } else if (typeof rawAssignedToIds === "string") {
-      try {
-        const parsed = JSON.parse(rawAssignedToIds);
-        if (Array.isArray(parsed)) {
-          assignedToIds = parsed.map((id: any) => Number(id)).filter((id: number) => Number.isFinite(id));
-        }
-      } catch {
-        assignedToIds = [];
-      }
-    }
-    if (assignedToIds.length === 0 && task.assignedToId) assignedToIds = [task.assignedToId];
-    const assignedUsers = users?.filter(u => assignedToIds.includes(u.id)) || [];
+  const orderedRows: Array<{ task: Task; depth: number }> = [];
+  const buildRows = (task: Task, depth: number) => {
+    orderedRows.push({ task, depth });
+    if (collapsedIds.has(task.id)) return;
     const children = childrenByParent.get(task.id) || [];
-    const isCollapsed = collapsedIds.has(task.id);
-    const statusLabel = typeof task.status === "string" && task.status.length > 0
-      ? task.status.replace("_", " ")
-      : "todo";
-    const priorityLabel = typeof task.priority === "string" && task.priority.length > 0
-      ? task.priority
-      : "medium";
-    const dragStartProps = {
-      draggable: true,
-      onDragStart: (e: DragEvent<HTMLElement>) => {
-        setDraggingId(task.id);
-        e.dataTransfer.effectAllowed = "move";
-        e.dataTransfer.setData("text/plain", String(task.id));
-      },
-      onDragEnd: () => {
-        setDraggingId(null);
-        setDragOverId(null);
-        setDragOverRoot(false);
-      },
-    };
-
-    return (
-      <Fragment key={task.id}>
-        <TableRow
-          key={task.id}
-          className={`group hover:bg-muted/20 transition-colors ${draggingId === task.id ? "opacity-60" : ""} ${dragOverId === task.id ? "bg-primary/10" : ""}`}
-          {...dragStartProps}
-          onDragOver={(e) => {
-            e.preventDefault();
-            e.dataTransfer.dropEffect = "move";
-          }}
-          onDragEnter={() => setDragOverId(task.id)}
-          onDragLeave={() => {
-            setDragOverId((prev) => (prev === task.id ? null : prev));
-          }}
-          onDrop={() => handleDropOnTask(task.id)}
-        >
-          <TableCell {...dragStartProps}>
-            <div className="flex items-start gap-2" style={{ paddingLeft: `${depth * 16}px` }}>
-              <span className="mt-0.5 text-muted-foreground/60">
-                <GripVertical className="w-4 h-4" />
-              </span>
-              {children.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => toggleCollapse(task.id)}
-                  className="mt-0.5 h-5 w-5 rounded border border-border/60 text-xs text-muted-foreground hover:bg-muted transition-colors"
-                  aria-label={isCollapsed ? "Expand sub tasks" : "Collapse sub tasks"}
-                >
-                  {isCollapsed ? "+" : "–"}
-                </button>
-              )}
-              {children.length === 0 && <span className="w-5" />}
-              <div className="flex flex-col gap-1 min-w-0">
-                <span className="font-medium text-foreground">{task.title}</span>
-                {formatTaskDescription(task.description) && (
-                  <span className="text-xs text-muted-foreground line-clamp-1 max-w-[300px] whitespace-pre-line break-words">
-                    {formatTaskDescription(task.description)}
-                  </span>
-                )}
-              </div>
-            </div>
-          </TableCell>
-          <TableCell {...dragStartProps}>
-            {assignedUsers.length > 0 ? (
-              <div className="flex items-center gap-2">
-                <div className="flex -space-x-1">
-                  {assignedUsers.slice(0, 3).map((assignedUser) => (
-                    <Avatar key={assignedUser.id} className="h-6 w-6 border border-primary/10">
-                      <AvatarFallback className="text-[10px] bg-primary/5 text-primary">
-                        {assignedUser.name.split(' ').map(n => n[0]).join('').toUpperCase()}
-                      </AvatarFallback>
-                    </Avatar>
-                  ))}
-                </div>
-                <span className="text-sm">
-                  {assignedUsers[0].name}
-                  {assignedUsers.length > 1 ? ` +${assignedUsers.length - 1}` : ""}
-                </span>
-              </div>
-            ) : (
-              <div className="flex items-center gap-2 text-muted-foreground">
-                <UserIcon className="w-4 h-4" />
-                <span className="text-sm">Unassigned</span>
-              </div>
-            )}
-          </TableCell>
-          <TableCell {...dragStartProps}>
-            <Badge variant="outline" className={`capitalize font-medium ${getStatusColor(task.status || "todo")}`}>
-              {statusLabel}
-            </Badge>
-          </TableCell>
-          <TableCell className="hidden md:table-cell" {...dragStartProps}>
-            <Badge variant="outline" className={`capitalize font-medium ${getPriorityColor(priorityLabel)}`}>
-              {priorityLabel}
-            </Badge>
-          </TableCell>
-          <TableCell className="hidden lg:table-cell" {...dragStartProps}>
-            <div className="flex items-center text-xs text-muted-foreground">
-              <CalendarDays className="w-3 h-3 mr-1.5" />
-              {(() => {
-                const parsedDueDate = parseDateOnly(task.dueDate as any);
-                return parsedDueDate ? formatShortDate(parsedDueDate) : "-";
-              })()}
-            </div>
-          </TableCell>
-          <TableCell className="text-right" {...dragStartProps}>
-            {canEdit ? (
-              <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 text-muted-foreground hover:text-primary"
-                  onClick={() => {
-                    setEditingTask(task);
-                    setIsDialogOpen(true);
-                  }}
-                >
-                  <Pencil className="w-4 h-4" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                  onClick={() => handleDelete(task.id)}
-                >
-                  <Trash2 className="w-4 h-4" />
-                </Button>
-              </div>
-            ) : (
-              <span className="text-xs text-muted-foreground">View only</span>
-            )}
-          </TableCell>
-        </TableRow>
-        {!isCollapsed && children.map((child) => renderRows(child, depth + 1))}
-      </Fragment>
-    );
+    children.forEach((child) => buildRows(child, depth + 1));
   };
+  rootTasks.forEach((task) => buildRows(task, 0));
+
+  const onDragStart = () => {
+    setIsDragging(true);
+  };
+
+  const onDragEnd = (result: DropResult) => {
+    setIsDragging(false);
+
+    const { destination, draggableId } = result;
+    if (!destination) return;
+
+    const taskId = Number(draggableId.replace("task-", ""));
+    if (!Number.isFinite(taskId)) return;
+
+    const destinationId = destination.droppableId;
+    let targetId: number | null = null;
+
+    if (destinationId.startsWith("root-")) {
+      targetId = null;
+    } else if (destinationId === "task-list") {
+      const target = orderedRows[destination.index]?.task;
+      targetId = target ? target.id : null;
+    }
+
+    if (targetId === taskId) return;
+    if (targetId !== null && !Number.isFinite(targetId)) return;
+    if (targetId !== null && isDescendant(taskId, targetId)) {
+      toast({
+        title: "Invalid move",
+        description: "You cannot move a task into its own sub-task.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const draggedTask = taskMap.get(taskId);
+    const canMoveDraggedTask = !!user?.id && !!draggedTask && (
+      user.role === "admin" ||
+      draggedTask.createdById === user.id ||
+      getAssignedToIds(draggedTask).includes(user.id)
+    );
+    if (!canMoveDraggedTask) {
+      toast({
+        title: "Read-only task",
+        description: "Only participants can move this task.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const currentParentId = typeof (draggedTask as any)?.parentTaskId === "number"
+      ? (draggedTask as any).parentTaskId
+      : null;
+    if (currentParentId === targetId) return;
+
+    updateTask.mutate({
+      id: taskId,
+      parentTaskId: targetId,
+    });
+
+    if (targetId === null) {
+      const descendants = getDescendants(taskId);
+      descendants.forEach((child) => {
+        updateTask.mutate({
+          id: child.id,
+          parentTaskId: null,
+        });
+      });
+    }
+  };
+
+  const renderRowContent = (
+    task: Task,
+    depth: number,
+    assignedUsers: Array<{ id: number; name: string }>,
+    hasChildren: boolean,
+    isCollapsed: boolean,
+    statusLabel: string,
+    priorityLabel: string,
+    canEdit: boolean,
+  ) => (
+    <>
+      <div className="flex items-start gap-2 min-w-0" style={{ paddingLeft: `${depth * 16}px` }}>
+        <span className="mt-0.5 text-muted-foreground/60">
+          <GripVertical className="w-4 h-4" />
+        </span>
+        {hasChildren && (
+          <button
+            type="button"
+            onClick={() => toggleCollapse(task.id)}
+            className="mt-0.5 h-5 w-5 rounded border border-border/60 text-xs text-muted-foreground hover:bg-muted transition-colors"
+            aria-label={isCollapsed ? "Expand sub tasks" : "Collapse sub tasks"}
+          >
+            {isCollapsed ? "+" : "–"}
+          </button>
+        )}
+        {!hasChildren && <span className="w-5" />}
+        <div className="flex flex-col gap-1 min-w-0">
+          <span className="font-medium text-foreground">{task.title}</span>
+          {formatTaskDescription(task.description) && (
+            <span className="text-xs text-muted-foreground line-clamp-1 max-w-[300px] whitespace-pre-line break-words">
+              {formatTaskDescription(task.description)}
+            </span>
+          )}
+        </div>
+      </div>
+      <div>
+        {assignedUsers.length > 0 ? (
+          <div className="flex items-center gap-2">
+            <div className="flex -space-x-1">
+              {assignedUsers.slice(0, 3).map((assignedUser) => (
+                <Avatar key={assignedUser.id} className="h-6 w-6 border border-primary/10">
+                  <AvatarFallback className="text-[10px] bg-primary/5 text-primary">
+                    {assignedUser.name.split(' ').map(n => n[0]).join('').toUpperCase()}
+                  </AvatarFallback>
+                </Avatar>
+              ))}
+            </div>
+            <span className="text-sm">
+              {assignedUsers[0].name}
+              {assignedUsers.length > 1 ? ` +${assignedUsers.length - 1}` : ""}
+            </span>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <UserIcon className="w-4 h-4" />
+            <span className="text-sm">Unassigned</span>
+          </div>
+        )}
+      </div>
+      <div>
+        <Badge variant="outline" className={`capitalize font-medium ${getStatusColor(task.status || "todo")}`}>
+          {statusLabel}
+        </Badge>
+      </div>
+      <div>
+        <Badge variant="outline" className={`capitalize font-medium ${getPriorityColor(priorityLabel)}`}>
+          {priorityLabel}
+        </Badge>
+      </div>
+      <div>
+        <div className="flex items-center text-xs text-muted-foreground">
+          <CalendarDays className="w-3 h-3 mr-1.5" />
+          {(() => {
+            const parsedDueDate = parseDateOnly(task.dueDate as any);
+            return parsedDueDate ? formatShortDate(parsedDueDate) : "-";
+          })()}
+        </div>
+      </div>
+      <div className="text-right">
+        {canEdit ? (
+          <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 text-muted-foreground hover:text-primary"
+              onClick={() => {
+                setEditingTask(task);
+                setIsDialogOpen(true);
+              }}
+            >
+              <Pencil className="w-4 h-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 text-muted-foreground hover:text-destructive"
+              onClick={() => handleDelete(task.id)}
+            >
+              <Trash2 className="w-4 h-4" />
+            </Button>
+          </div>
+        ) : (
+          <span className="text-xs text-muted-foreground">View only</span>
+        )}
+      </div>
+    </>
+  );
 
   return (
     <div className="flex flex-col gap-4">
@@ -465,63 +488,114 @@ export default function ListView() {
 
       <div className="bg-card rounded-xl border border-border shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
-          <Table>
-            <TableHeader className="bg-muted/30">
-              <TableRow>
-                <TableHead className="min-w-[220px]">Task Details</TableHead>
-                <TableHead className="min-w-[170px]">Assigned To</TableHead>
-                <TableHead className="min-w-[120px]">Status</TableHead>
-                <TableHead className="hidden md:table-cell min-w-[110px]">Priority</TableHead>
-                <TableHead className="hidden lg:table-cell min-w-[140px]">Due Date</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {visibleTasks.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={6} className="h-48 text-center text-muted-foreground">
-                    No tasks found. Create one to get started!
-                  </TableCell>
-                </TableRow>
-              ) : (
-                <>
-                  {draggingId !== null && (
-                    <TableRow
-                      className={dragOverRoot ? "bg-primary/10" : ""}
-                      onDragOver={(e) => {
-                        e.preventDefault();
-                        e.dataTransfer.dropEffect = "move";
-                        setDragOverRoot(true);
-                      }}
-                      onDragLeave={() => setDragOverRoot(false)}
-                      onDrop={() => handleDropOnTask(null)}
+          <div className="min-w-[900px]">
+            <div className="grid grid-cols-[minmax(220px,1.6fr)_minmax(170px,1fr)_minmax(120px,0.7fr)_minmax(110px,0.6fr)_minmax(140px,0.7fr)_minmax(120px,0.5fr)] gap-3 border-b bg-muted/30 px-4 py-3 text-sm font-medium text-muted-foreground">
+              <div>Task Details</div>
+              <div>Assigned To</div>
+              <div>Status</div>
+              <div>Priority</div>
+              <div>Due Date</div>
+              <div className="text-right">Actions</div>
+            </div>
+
+            {visibleTasks.length === 0 ? (
+              <div className="h-48 flex items-center justify-center text-muted-foreground">
+                No tasks found. Create one to get started!
+              </div>
+            ) : (
+              <DragDropContext onDragStart={onDragStart} onDragEnd={onDragEnd}>
+                <StrictModeDroppable droppableId="root-top" type="TASK">
+                  {(provided, snapshot) => (
+                    <div
+                      ref={provided.innerRef}
+                      {...provided.droppableProps}
+                      className={`border-b px-4 py-2 text-xs transition-colors ${snapshot.isDraggingOver ? "bg-primary/10 text-muted-foreground" : "text-transparent"} ${isDragging ? "pointer-events-auto" : "pointer-events-none"}`}
                     >
-                      <TableCell colSpan={6} className="text-xs text-muted-foreground py-2 transition-colors">
-                        Drop here to make it a top-level task
-                      </TableCell>
-                    </TableRow>
+                      Drop here to make it a top-level task
+                      {provided.placeholder}
+                    </div>
                   )}
-                  {rootTasks.map((task) => renderRows(task, 0))}
-                  {draggingId !== null && rootTasks.length > 0 && (
-                    <TableRow
-                      className={dragOverRoot ? "bg-primary/10" : ""}
-                      onDragOver={(e) => {
-                        e.preventDefault();
-                        e.dataTransfer.dropEffect = "move";
-                        setDragOverRoot(true);
-                      }}
-                      onDragLeave={() => setDragOverRoot(false)}
-                      onDrop={() => handleDropOnTask(null)}
+                </StrictModeDroppable>
+
+                <StrictModeDroppable
+                  droppableId="task-list"
+                  type="TASK"
+                >
+                  {(listProvided) => (
+                    <div ref={listProvided.innerRef} {...listProvided.droppableProps}>
+                      {orderedRows.map(({ task, depth }, index) => {
+                        const canEdit = !!user?.id && task.createdById === user.id;
+                        const rawAssignedToIds = (task as any).assignedToIds;
+                        let assignedToIds: number[] = [];
+                        if (Array.isArray(rawAssignedToIds)) {
+                          assignedToIds = rawAssignedToIds.map((id: any) => Number(id)).filter((id: number) => Number.isFinite(id));
+                        } else if (typeof rawAssignedToIds === "string") {
+                          try {
+                            const parsed = JSON.parse(rawAssignedToIds);
+                            if (Array.isArray(parsed)) {
+                              assignedToIds = parsed.map((id: any) => Number(id)).filter((id: number) => Number.isFinite(id));
+                            }
+                          } catch {
+                            assignedToIds = [];
+                          }
+                        }
+                        if (assignedToIds.length === 0 && task.assignedToId) assignedToIds = [task.assignedToId];
+                        const assignedUsers = users?.filter(u => assignedToIds.includes(u.id)) || [];
+                        const children = childrenByParent.get(task.id) || [];
+                        const isCollapsed = collapsedIds.has(task.id);
+                        const statusLabel = typeof task.status === "string" && task.status.length > 0
+                          ? task.status.replace("_", " ")
+                          : "todo";
+                        const priorityLabel = typeof task.priority === "string" && task.priority.length > 0
+                          ? task.priority
+                          : "medium";
+                        const rowId = `task-${task.id}`;
+
+                        return (
+                          <Draggable draggableId={rowId} index={index} key={task.id}>
+                            {(provided, snapshot) => (
+                              <div
+                                ref={provided.innerRef}
+                                {...provided.draggableProps}
+                                {...provided.dragHandleProps}
+                                style={provided.draggableProps.style}
+                                className={`group grid grid-cols-[minmax(220px,1.6fr)_minmax(170px,1fr)_minmax(120px,0.7fr)_minmax(110px,0.6fr)_minmax(140px,0.7fr)_minmax(120px,0.5fr)] items-center gap-3 border-b px-4 py-3 transition-colors ${snapshot.isDragging ? "bg-muted/40 shadow-lg" : "hover:bg-muted/20"}`}
+                              >
+                                {renderRowContent(
+                                  task,
+                                  depth,
+                                  assignedUsers,
+                                  children.length > 0,
+                                  isCollapsed,
+                                  statusLabel,
+                                  priorityLabel,
+                                  canEdit,
+                                )}
+                              </div>
+                            )}
+                          </Draggable>
+                        );
+                      })}
+                      {listProvided.placeholder}
+                    </div>
+                  )}
+                </StrictModeDroppable>
+
+                <StrictModeDroppable droppableId="root-bottom" type="TASK">
+                  {(provided, snapshot) => (
+                    <div
+                      ref={provided.innerRef}
+                      {...provided.droppableProps}
+                      className={`px-4 py-2 text-xs transition-colors ${snapshot.isDraggingOver ? "bg-primary/10 text-muted-foreground" : "text-transparent"} ${isDragging && orderedRows.length > 0 ? "pointer-events-auto" : "pointer-events-none"}`}
                     >
-                      <TableCell colSpan={6} className="text-xs text-muted-foreground py-2 transition-colors">
-                        Drop here to make it a top-level task
-                      </TableCell>
-                    </TableRow>
+                      Drop here to make it a top-level task
+                      {provided.placeholder}
+                    </div>
                   )}
-                </>
-              )}
-            </TableBody>
-          </Table>
+                </StrictModeDroppable>
+              </DragDropContext>
+            )}
+          </div>
         </div>
 
         <TaskDialog 
