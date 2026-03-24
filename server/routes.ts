@@ -1228,10 +1228,12 @@ export async function registerRoutes(
       const isCreator = existing.createdById === req.user.id;
       const isParticipant = canUserAccessTask(req.user, existing);
       const updateKeys = Object.keys(input || {});
-      const isStatusOnlyUpdate = updateKeys.length > 0 && updateKeys.every((key) => key === "status" || key === "completed");
+      const participantEditableKeys = new Set(["status", "completed", "parentTaskId", "sortOrder"]);
+      const isParticipantStructureUpdate =
+        updateKeys.length > 0 && updateKeys.every((key) => participantEditableKeys.has(key));
 
       if (!isAdmin && !isCreator) {
-        if (!(isParticipant && isStatusOnlyUpdate)) {
+        if (!(isParticipant && isParticipantStructureUpdate)) {
           return res.status(403).json({ message: "Only the task creator can edit this task" });
         }
       }

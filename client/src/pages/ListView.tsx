@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { DragDropContext, Droppable, Draggable, type DropResult, type DroppableProps } from "@hello-pangea/dnd";
 import { useTasks, useDeleteTask, useUpdateTask } from "@/hooks/use-tasks";
 import { useUsers } from "@/hooks/use-users";
@@ -8,7 +9,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Loader2, Pencil, RotateCcw, Trash2, CalendarDays, GripVertical, User as UserIcon } from "lucide-react";
+import { Loader2, Pencil, RotateCcw, Trash2, CalendarDays, GripVertical, User as UserIcon, Unlink } from "lucide-react";
 import { formatShortDate, formatTaskDescription, parseDateOnly } from "@/lib/utils";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useAuth } from "@/hooks/use-auth";
@@ -48,14 +49,21 @@ const StrictModeDroppable = ({ children, ...props }: DroppableProps) => {
   return <Droppable {...props}>{children}</Droppable>;
 };
 
-const moveItemInOrder = (
+const moveBlockBeforeIndex = (
   order: number[],
-  startIndex: number,
-  endIndex: number,
+  blockIds: number[],
+  visibleRowIds: number[],
+  destinationIndex: number,
 ) => {
-  const next = [...order];
-  const [removed] = next.splice(startIndex, 1);
-  next.splice(endIndex, 0, removed);
+  const blockIdSet = new Set(blockIds);
+  const next = order.filter((id) => !blockIdSet.has(id));
+  const remainingVisibleRowIds = visibleRowIds.filter((id) => !blockIdSet.has(id));
+  const anchorId = remainingVisibleRowIds[destinationIndex];
+  const insertAt = anchorId ? next.indexOf(anchorId) : next.length;
+
+  if (insertAt < 0) return [...next, ...blockIds];
+
+  next.splice(insertAt, 0, ...blockIds);
   return next;
 };
 
@@ -68,13 +76,18 @@ const getParentTaskId = (task: Task | null | undefined) => {
   return typeof rawParentId === "number" && Number.isFinite(rawParentId) ? rawParentId : null;
 };
 
-const moveTaskAfterTarget = (order: number[], taskId: number, targetId: number) => {
-  const next = order.filter((id) => id !== taskId);
+const moveTaskAfterTarget = (order: number[], blockIds: number[], targetId: number) => {
+  const blockIdSet = new Set(blockIds);
+  const next = order.filter((id) => !blockIdSet.has(id));
   const targetIndex = next.indexOf(targetId);
-  if (targetIndex === -1) return [...next, taskId];
-  next.splice(targetIndex + 1, 0, taskId);
+  if (targetIndex === -1) return [...next, ...blockIds];
+  next.splice(targetIndex + 1, 0, ...blockIds);
   return next;
 };
+
+const getSortOrderValue = (task: Task | null | undefined) => (
+  typeof (task as any)?.sortOrder === "number" ? (task as any).sortOrder : 0
+);
 
 export default function ListView() {
   const { data: tasks, isLoading } = useTasks();
@@ -87,7 +100,6 @@ export default function ListView() {
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [collapsedIds, setCollapsedIds] = useState<Set<number>>(new Set());
-  const [isDragging, setIsDragging] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [priorityFilter, setPriorityFilter] = useState("all");
   const [ownershipFilter, setOwnershipFilter] = useState("all");
@@ -212,6 +224,27 @@ export default function ListView() {
     setDueFilter("all");
   };
 
+  const detachTaskFromParent = (taskId: number, position: "top" | "bottom" = "bottom") => {
+    const remainingRootTasks = rootTasks.filter((task) => task.id !== taskId);
+    const nextSortOrder = position === "top"
+      ? ((getSortOrderValue(remainingRootTasks[0]) || 1024) - 1024)
+      : ((getSortOrderValue(remainingRootTasks[remainingRootTasks.length - 1]) || 0) + 1024);
+
+    updateTask.mutate({
+      id: taskId,
+      parentTaskId: null,
+      sortOrder: nextSortOrder,
+    }, {
+      onError: () => {
+        toast({
+          title: "Couldn't remove sub-task",
+          description: "Detach request failed. Try again.",
+          variant: "destructive",
+        });
+      },
+    });
+  };
+
   if (isLoading) {
     return (
       <div className="h-full flex items-center justify-center">
@@ -284,18 +317,18 @@ export default function ListView() {
   };
   rootTasks.forEach((task) => buildRows(task, 0));
 
-  const onDragStart = () => {
-    setIsDragging(true);
-  };
-
   const onDragEnd = (result: DropResult) => {
-    setIsDragging(false);
-
-    const { destination, combine, draggableId, source } = result;
+    const { destination, combine, draggableId } = result;
     if (!destination && !combine) return;
 
     const taskId = Number(draggableId.replace("task-", ""));
     if (!Number.isFinite(taskId)) return;
+    const draggedTask = taskMap.get(taskId);
+    if (!draggedTask) return;
+
+    const descendantIds = new Set(getDescendants(taskId).map((task) => task.id));
+    const subtreeIds = taskOrder.filter((id) => id === taskId || descendantIds.has(id));
+    const visibleRowIds = orderedRows.map(({ task }) => task.id);
 
     let nextParentId: number | null = null;
     let nextOrder = taskOrder;
@@ -304,23 +337,18 @@ export default function ListView() {
       const combineTaskId = Number(combine.draggableId.replace("task-", ""));
       if (!Number.isFinite(combineTaskId)) return;
       nextParentId = combineTaskId;
-      nextOrder = moveTaskAfterTarget(taskOrder, taskId, combineTaskId);
+      nextOrder = moveTaskAfterTarget(taskOrder, subtreeIds, combineTaskId);
     } else {
       if (!destination) return;
-      nextOrder = moveItemInOrder(taskOrder, source.index, destination.index);
 
-      if (destination.droppableId.startsWith("root-")) {
-        nextParentId = null;
-      } else {
-        const reorderedRows = nextOrder
-          .map((id) => taskMap.get(id))
-          .filter((task): task is Task => !!task);
-        const targetTask = reorderedRows[destination.index];
-        const targetParentId = typeof (targetTask as any)?.parentTaskId === "number"
-          ? (targetTask as any).parentTaskId
-          : null;
-        nextParentId = targetParentId;
-      }
+      nextOrder = moveBlockBeforeIndex(taskOrder, subtreeIds, visibleRowIds, destination.index);
+      const reorderedVisibleRowIds = moveBlockBeforeIndex(visibleRowIds, subtreeIds, visibleRowIds, destination.index);
+      const targetTaskId = reorderedVisibleRowIds[destination.index];
+      const targetTask = targetTaskId ? taskMap.get(targetTaskId) : null;
+      const targetParentId = typeof (targetTask as any)?.parentTaskId === "number"
+        ? (targetTask as any).parentTaskId
+        : null;
+      nextParentId = targetParentId;
     }
 
     if (nextParentId === taskId) return;
@@ -334,7 +362,6 @@ export default function ListView() {
       return;
     }
 
-    const draggedTask = taskMap.get(taskId);
     const canMoveDraggedTask = !!user?.id && !!draggedTask && (
       user.role === "admin" ||
       draggedTask.createdById === user.id ||
@@ -357,7 +384,7 @@ export default function ListView() {
 
     if (
       currentParentId === nextParentId &&
-      (!destination || (source.droppableId === destination.droppableId && source.index === destination.index))
+      areNumberArraysEqual(taskOrder, nextOrder)
     ) return;
 
     const nextParentByTaskId = new Map<number, number | null>();
@@ -396,16 +423,6 @@ export default function ListView() {
     updatesToPersist.forEach((payload) => {
       updateTask.mutate(payload);
     });
-
-    if (nextParentId === null) {
-      const descendants = getDescendants(taskId);
-      descendants.forEach((child) => {
-        updateTask.mutate({
-          id: child.id,
-          parentTaskId: null,
-        });
-      });
-    }
   };
 
   const renderRowContent = (
@@ -417,6 +434,8 @@ export default function ListView() {
     statusLabel: string,
     priorityLabel: string,
     canEdit: boolean,
+    canMove: boolean,
+    isSubtask: boolean,
   ) => (
     <>
       <div className="flex items-start gap-2 min-w-0" style={{ paddingLeft: `${depth * 16}px` }}>
@@ -487,8 +506,19 @@ export default function ListView() {
         </div>
       </div>
       <div className="text-right">
-        {canEdit ? (
+        {canEdit || (canMove && isSubtask) ? (
           <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            {canMove && isSubtask && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 px-2 text-muted-foreground hover:text-primary"
+                onClick={() => detachTaskFromParent(task.id)}
+              >
+                <Unlink className="mr-1 h-3.5 w-3.5" />
+                Detach
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="icon"
@@ -604,28 +634,11 @@ export default function ListView() {
                 No tasks found. Create one to get started!
               </div>
             ) : (
-              <DragDropContext onDragStart={onDragStart} onDragEnd={onDragEnd}>
-                <StrictModeDroppable droppableId="root-top" type="TASK">
-                  {(provided, snapshot) => (
-                    <div
-                      ref={provided.innerRef}
-                      {...provided.droppableProps}
-                      className={`border-b px-4 py-2 text-xs transition-colors ${isDragging ? "pointer-events-auto" : "pointer-events-none"} ${snapshot.isDraggingOver
-                        ? "bg-primary/10 text-muted-foreground"
-                        : "text-transparent"
-                        }`}
-                    >
-                      Drop here to make it a top-level task
-                      {provided.placeholder}
-                    </div>
-                  )}
-                </StrictModeDroppable>
-
+              <DragDropContext onDragEnd={onDragEnd}>
                 <StrictModeDroppable droppableId="task-list" type="TASK" isCombineEnabled>
                   {(listProvided) => (
                     <div ref={listProvided.innerRef} {...listProvided.droppableProps}>
                       {orderedRows.map(({ task, depth }, index) => {
-                        const canEdit = !!user?.id && task.createdById === user.id;
                         const rawAssignedToIds = (task as any).assignedToIds;
                         let assignedToIds: number[] = [];
                         if (Array.isArray(rawAssignedToIds)) {
@@ -641,6 +654,12 @@ export default function ListView() {
                           }
                         }
                         if (assignedToIds.length === 0 && task.assignedToId) assignedToIds = [task.assignedToId];
+                        const canEdit = !!user?.id && task.createdById === user.id;
+                        const canMove = !!user?.id && (
+                          user.role === "admin" ||
+                          task.createdById === user.id ||
+                          assignedToIds.includes(user.id)
+                        );
                         const assignedUsers = users?.filter(u => assignedToIds.includes(u.id)) || [];
                         const children = childrenByParent.get(task.id) || [];
                         const isCollapsed = collapsedIds.has(task.id);
@@ -655,59 +674,51 @@ export default function ListView() {
                         return (
                           <Draggable draggableId={rowId} index={index} key={task.id}>
                             {(provided, snapshot) => (
-                              <div ref={provided.innerRef} style={provided.draggableProps.style} className="relative">
-                                <div
-                                  {...provided.draggableProps}
-                                  {...provided.dragHandleProps}
-                                  className={`group grid grid-cols-[minmax(220px,1.6fr)_minmax(170px,1fr)_minmax(120px,0.7fr)_minmax(110px,0.6fr)_minmax(140px,0.7fr)_minmax(120px,0.5fr)] items-center gap-3 border-b px-4 py-3 transition-colors ${snapshot.isDragging
-                                    ? "bg-muted/40 shadow-lg"
-                                    : "hover:bg-muted/20"
-                                    } ${snapshot.combineTargetFor
-                                      ? "bg-primary/10"
-                                      : ""
-                                    }`}
-                                >
-                                  {renderRowContent(
-                                    task,
-                                    depth,
-                                    assignedUsers,
-                                    children.length > 0,
-                                    isCollapsed,
-                                    statusLabel,
-                                    priorityLabel,
-                                    canEdit,
-                                  )}
-                                </div>
+                              (() => {
+                                const row = (
+                                  <div
+                                    ref={provided.innerRef}
+                                    {...provided.draggableProps}
+                                    {...provided.dragHandleProps}
+                                    style={provided.draggableProps.style}
+                                    className={`relative group grid grid-cols-[minmax(220px,1.6fr)_minmax(170px,1fr)_minmax(120px,0.7fr)_minmax(110px,0.6fr)_minmax(140px,0.7fr)_minmax(120px,0.5fr)] items-center gap-3 border-b px-4 py-3 transition-colors ${snapshot.isDragging
+                                      ? "bg-background shadow-lg"
+                                      : "hover:bg-muted/20"
+                                      } ${snapshot.combineTargetFor
+                                        ? "bg-primary/10"
+                                        : ""
+                                      }`}
+                                  >
+                                    {renderRowContent(
+                                      task,
+                                      depth,
+                                      assignedUsers,
+                                      children.length > 0,
+                                      isCollapsed,
+                                      statusLabel,
+                                      priorityLabel,
+                                      canEdit,
+                                      canMove,
+                                      depth > 0,
+                                    )}
 
-                                {snapshot.combineTargetFor && !snapshot.isDragging && (
-                                  <div className="pointer-events-none absolute inset-x-0 top-1/2 z-30 flex -translate-y-1/2 justify-center px-4">
-                                    <span className="rounded bg-background px-2 py-1 text-[11px] font-medium text-primary shadow-sm">
-                                      Drop to make sub-task
-                                    </span>
+                                    {snapshot.combineTargetFor && !snapshot.isDragging && (
+                                      <div className="pointer-events-none absolute inset-x-0 top-1/2 z-30 flex -translate-y-1/2 justify-center px-4">
+                                        <span className="rounded bg-background px-2 py-1 text-[11px] font-medium text-primary shadow-sm">
+                                          Drop to make sub-task
+                                        </span>
+                                      </div>
+                                    )}
                                   </div>
-                                )}
-                              </div>
+                                );
+
+                                return snapshot.isDragging ? createPortal(row, document.body) : row;
+                              })()
                             )}
                           </Draggable>
                         );
                       })}
                       {listProvided.placeholder}
-                    </div>
-                  )}
-                </StrictModeDroppable>
-
-                <StrictModeDroppable droppableId="root-bottom" type="TASK">
-                  {(provided, snapshot) => (
-                    <div
-                      ref={provided.innerRef}
-                      {...provided.droppableProps}
-                      className={`px-4 py-2 text-xs transition-colors ${isDragging && orderedRows.length > 0 ? "pointer-events-auto" : "pointer-events-none"} ${snapshot.isDraggingOver
-                        ? "bg-primary/10 text-muted-foreground"
-                        : "text-transparent"
-                        }`}
-                    >
-                      Drop here to make it a top-level task
-                      {provided.placeholder}
                     </div>
                   )}
                 </StrictModeDroppable>
