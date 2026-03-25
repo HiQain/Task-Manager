@@ -275,6 +275,28 @@ export class DatabaseStorage implements IStorage {
     const [existing] = await db.select().from(users).where(eq(users.id, id));
     if (!existing) return;
 
+    const allTasks = await db.select().from(tasks);
+    const affectedTasks = allTasks.filter((task) => {
+      if (task.createdById === id) return true;
+      return normalizeAssignedToIds((task as any).assignedToIds, (task as any).assignedToId).includes(id);
+    });
+
+    for (const task of affectedTasks) {
+      const nextAssignedToIds = normalizeAssignedToIds(
+        (task as any).assignedToIds,
+        (task as any).assignedToId,
+      ).filter((assignedUserId) => assignedUserId !== id);
+
+      await db
+        .update(tasks)
+        .set({
+          createdById: task.createdById === id ? null : task.createdById,
+          assignedToId: nextAssignedToIds[0] ?? null,
+          assignedToIds: JSON.stringify(nextAssignedToIds),
+        })
+        .where(eq(tasks.id, task.id));
+    }
+
     await db
       .update(users)
       .set({
@@ -426,13 +448,7 @@ export class DatabaseStorage implements IStorage {
   // Chat Implementation
   async getChatUsers(currentUserId: number): Promise<User[]> {
     const allUsers = await db.select().from(users).where(ne(users.id, currentUserId));
-    const incoming = await db.select().from(messages).where(eq(messages.toUserId, currentUserId));
-    const outgoing = await db.select().from(messages).where(eq(messages.fromUserId, currentUserId));
-    const chattedUserIds = new Set<number>();
-    incoming.forEach((row) => chattedUserIds.add(row.fromUserId));
-    outgoing.forEach((row) => chattedUserIds.add(row.toUserId));
-
-    return allUsers.filter((u) => !isDeletedUserRecord(u) || chattedUserIds.has(u.id));
+    return allUsers.filter((u) => !isDeletedUserRecord(u));
   }
 
   async getMessagesBetweenUsers(userId: number, otherUserId: number): Promise<Message[]> {

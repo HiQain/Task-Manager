@@ -46,6 +46,26 @@ const startOfToday = () => {
   return new Date(now.getFullYear(), now.getMonth(), now.getDate());
 };
 
+function getTaskGroupNonAdminParticipantCount(
+  createdById: number | undefined,
+  assignedToIds: number[],
+  users: Array<{ id: number; role?: string | null }>,
+): number {
+  const participantIds = Array.from(
+    new Set<number>(
+      [createdById, ...assignedToIds].filter(
+        (id): id is number => typeof id === "number" && Number.isFinite(id),
+      ),
+    ),
+  );
+  const nonAdminUserIds = new Set(
+    users
+      .filter((member) => String(member.role || "").toLowerCase() !== "admin")
+      .map((member) => member.id),
+  );
+  return participantIds.filter((id) => nonAdminUserIds.has(id)).length;
+}
+
 export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
   const { toast } = useToast();
   const createTask = useCreateTask();
@@ -207,7 +227,8 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
       assignedToId: normalizedAssignedToIds.length > 0 ? normalizedAssignedToIds[0] : undefined,
     };
     try {
-      const shouldCreateGroup = !!currentUser?.id && normalizedAssignedToIds.length > 0;
+      const creatorId = task?.createdById ?? currentUser?.id;
+      const shouldCreateGroup = getTaskGroupNonAdminParticipantCount(creatorId, normalizedAssignedToIds, users || []) >= 2;
       if (task) {
         await updateTask.mutateAsync({ id: task.id, ...payload });
         if (shouldCreateGroup) {

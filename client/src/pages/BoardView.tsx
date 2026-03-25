@@ -38,6 +38,22 @@ function getAssignedToIds(task: Task): number[] {
   return assignedToIds;
 }
 
+function getTaskNonAdminParticipantCount(task: Task, users: Array<{ id: number; role?: string | null }>): number {
+  const participantIds = Array.from(
+    new Set<number>(
+      [task.createdById, ...getAssignedToIds(task)].filter(
+        (id): id is number => typeof id === "number" && Number.isFinite(id),
+      ),
+    ),
+  );
+  const nonAdminUserIds = new Set(
+    users
+      .filter((member) => String(member.role || "").toLowerCase() !== "admin")
+      .map((member) => member.id),
+  );
+  return participantIds.filter((id) => nonAdminUserIds.has(id)).length;
+}
+
 export default function BoardView() {
   const { data: tasks, isLoading } = useTasks();
   const { data: users } = useUsers();
@@ -122,16 +138,7 @@ export default function BoardView() {
 
   const handleMessage = async (task: Task) => {
     if (!user?.id) return;
-    const participantIds = Array.from(
-      new Set<number>(
-        [task.createdById, ...getAssignedToIds(task)].filter(
-          (id): id is number => typeof id === "number" && Number.isFinite(id)
-        )
-      )
-    );
-    const otherParticipantIds = participantIds.filter((id) => id !== user.id);
-
-    if (otherParticipantIds.length >= 1) {
+    if (getTaskNonAdminParticipantCount(task, users || []) >= 2) {
       try {
         await ensureTaskGroup.mutateAsync(task.id);
       } catch (error) {
@@ -146,9 +153,29 @@ export default function BoardView() {
       return;
     }
 
+    const participantIds = Array.from(
+      new Set<number>(
+        [task.createdById, ...getAssignedToIds(task)].filter(
+          (id): id is number => typeof id === "number" && Number.isFinite(id),
+        ),
+      ),
+    );
+    const otherParticipantIds = participantIds.filter((id) => id !== user.id);
+    const creatorId = typeof task.createdById === "number" && Number.isFinite(task.createdById)
+      ? task.createdById
+      : undefined;
+    const fallbackUserId = creatorId && creatorId !== user.id
+      ? creatorId
+      : otherParticipantIds[0];
+
+    if (fallbackUserId) {
+      setLocation(`/chat?userId=${fallbackUserId}`);
+      return;
+    }
+
     toast({
-      title: "No participants",
-      description: "This task has no other chat participants yet.",
+      title: "Chat unavailable",
+      description: "No other task participant is available for chat yet.",
       variant: "destructive",
     });
   };

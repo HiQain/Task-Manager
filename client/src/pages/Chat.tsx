@@ -86,6 +86,19 @@ function encodeMessagePayload(text: string, attachments: ChatAttachment[]): stri
   return `${CHAT_ATTACHMENT_PREFIX}${JSON.stringify({ text, attachments })}`;
 }
 
+function getMentionToken(value: string) {
+  const match = value.match(/(?:^|\s)@([a-z0-9._-]*)$/i);
+  return match ? match[1] : null;
+}
+
+function getMentionLabel(member: { name?: string | null; email?: string | null }) {
+  const name = String(member.name || "").trim();
+  if (name) return name.split(/\s+/)[0];
+  const email = String(member.email || "").trim();
+  if (email) return email.split("@")[0] || email;
+  return "user";
+}
+
 function estimateDataUrlBytes(dataUrl: string): number {
   const base64 = dataUrl.split(",")[1] || "";
   const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
@@ -178,6 +191,30 @@ function getTaskMemberIds(task: any): number[] {
   );
 }
 
+function getTaskAssignedIds(task: any): number[] {
+  const rawAssignedToIds = task?.assignedToIds;
+  let assignedToIds: number[] = [];
+
+  if (Array.isArray(rawAssignedToIds)) {
+    assignedToIds = rawAssignedToIds.map((id: unknown) => Number(id)).filter((id) => Number.isFinite(id));
+  } else if (typeof rawAssignedToIds === "string") {
+    try {
+      const parsed = JSON.parse(rawAssignedToIds);
+      if (Array.isArray(parsed)) {
+        assignedToIds = parsed.map((id: unknown) => Number(id)).filter((id) => Number.isFinite(id));
+      }
+    } catch {
+      assignedToIds = [];
+    }
+  }
+
+  if (assignedToIds.length === 0 && task?.assignedToId) {
+    assignedToIds = [task.assignedToId];
+  }
+
+  return Array.from(new Set(assignedToIds));
+}
+
 export default function Chat() {
   const [location, setLocation] = useLocation();
   const { user } = useAuth();
@@ -197,8 +234,11 @@ export default function Chat() {
   const [duplicatePromptFileName, setDuplicatePromptFileName] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [isGroupSectionOpen, setIsGroupSectionOpen] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState("");
+  const [isMentionOpen, setIsMentionOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
+  const draftInputRef = useRef<HTMLInputElement | null>(null);
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
   const wsRef = useRef<WebSocket | null>(null);
@@ -248,6 +288,15 @@ export default function Chat() {
     return Array.from(map.values());
   }, [users, chatUsers, user]);
 
+  const activeKnownUsers = useMemo(
+    () => allKnownUsers.filter((entry) => !isDeletedChatUser(entry)),
+    [allKnownUsers],
+  );
+  const activeKnownUserIds = useMemo(
+    () => new Set(activeKnownUsers.map((entry) => entry.id)),
+    [activeKnownUsers],
+  );
+
   useEffect(() => {
     usersRef.current = allKnownUsers.map((u) => ({ id: u.id, name: u.name }));
   }, [allKnownUsers]);
@@ -277,7 +326,7 @@ export default function Chat() {
   }, []);
 
   const teamMembers = useMemo(
-    () => (chatUsers || []).filter((u) => u.id !== user?.id),
+    () => (chatUsers || []).filter((u) => u.id !== user?.id && !isDeletedChatUser(u)),
     [chatUsers, user?.id]
   );
 
@@ -307,13 +356,20 @@ export default function Chat() {
 
   const filteredTaskGroups = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return taskGroups;
-    return taskGroups.filter((entry) => {
+    const visibleTaskGroups = taskGroups
+      .map((entry) => ({
+        ...entry,
+        activeParticipantIds: entry.participantIds.filter((id) => activeKnownUserIds.has(id)),
+      }))
+      .filter((entry) => entry.activeParticipantIds.length > 0);
+
+    if (!q) return visibleTaskGroups;
+    return visibleTaskGroups.filter((entry) => {
       const title = (entry.task?.title || "").toLowerCase();
       const description = (entry.task?.description || "").toLowerCase();
       return title.includes(q) || description.includes(q);
     });
-  }, [search, taskGroups]);
+  }, [search, taskGroups, activeKnownUserIds]);
 
   useEffect(() => {
     const query = new URLSearchParams(window.location.search);
@@ -348,6 +404,13 @@ export default function Chat() {
     }
   }, [filteredUsers, activeUserId, activeTaskGroupId, isChatUsersLoading]);
 
+  useEffect(() => {
+    if (!activeUserId) return;
+    if (teamMembers.some((member) => member.id === activeUserId)) return;
+    setActiveUserId(undefined);
+    setLocation("/chat");
+  }, [activeUserId, teamMembers, setLocation]);
+
   const activeUser = useMemo(
     () => teamMembers.find((u) => u.id === activeUserId),
     [teamMembers, activeUserId]
@@ -360,9 +423,27 @@ export default function Chat() {
     if (!activeTask) return [];
     return getTaskMemberIds(activeTask);
   }, [activeTask]);
+  const activeTaskAssignedIds = useMemo(() => {
+    if (!activeTask) return [];
+    return getTaskAssignedIds(activeTask);
+  }, [activeTask]);
   const activeTaskParticipants = useMemo(
-    () => allKnownUsers.filter((u) => activeTaskParticipantIds.includes(u.id)),
-    [allKnownUsers, activeTaskParticipantIds]
+    () => activeKnownUsers.filter((u) => activeTaskParticipantIds.includes(u.id)),
+    [activeKnownUsers, activeTaskParticipantIds]
+  );
+  const mentionCandidates = useMemo(
+    () => activeKnownUsers
+      .filter((member) => activeTaskAssignedIds.includes(member.id))
+      .filter((member) => member.id !== user?.id)
+      .filter((member) => {
+        if (!mentionQuery) return true;
+        const token = mentionQuery.toLowerCase();
+        const name = String(member.name || "").toLowerCase();
+        const email = String(member.email || "").toLowerCase();
+        return name.includes(token) || email.includes(token);
+      })
+      .slice(0, 6),
+    [activeKnownUsers, activeTaskAssignedIds, mentionQuery, user?.id],
   );
   const incomingCallFromUser = useMemo(
     () => teamMembers.find((u) => u.id === incomingCallFromUserId),
@@ -955,6 +1036,8 @@ export default function Chat() {
   }, [displayedMessages]);
 
   const handleSend = async () => {
+    if (sendPending) return;
+
     const content = draft.trim();
     if (!content && draftAttachments.length === 0) return;
     if (!isGroupMode && isDeletedChatUser(activeUser)) {
@@ -984,7 +1067,12 @@ export default function Chat() {
       }
       setDraft("");
       setDraftAttachments([]);
+      setMentionQuery("");
+      setIsMentionOpen(false);
       stopTyping(activeUserId);
+      requestAnimationFrame(() => {
+        draftInputRef.current?.focus();
+      });
     } catch (error) {
       toast({
         title: "Message send failed",
@@ -1014,6 +1102,10 @@ export default function Chat() {
 
   const handleDraftChange = (value: string) => {
     setDraft(value);
+    const mentionToken = isGroupMode ? getMentionToken(value) : null;
+    setMentionQuery(mentionToken || "");
+    setIsMentionOpen(isGroupMode && mentionToken !== null);
+
     if (!activeUserId || isGroupMode) return;
     const trimmed = value.trim();
     const previousTargetUserId = typingTargetUserIdRef.current;
@@ -1035,6 +1127,33 @@ export default function Chat() {
     typingStopTimeoutRef.current = window.setTimeout(() => {
       stopTyping(activeUserId);
     }, 1500);
+  };
+
+  const insertMention = (label: string) => {
+    const nextDraft = draft.replace(/(^|\s)@([a-z0-9._-]*)$/i, `$1@${label} `);
+    setDraft(nextDraft);
+    setMentionQuery("");
+    setIsMentionOpen(false);
+    requestAnimationFrame(() => {
+      if (!draftInputRef.current) return;
+      draftInputRef.current.focus();
+      const caretPosition = nextDraft.length;
+      draftInputRef.current.setSelectionRange(caretPosition, caretPosition);
+    });
+  };
+
+  const renderMessageText = (text: string) => {
+    const parts = text.split(/(\s+)/);
+    return parts.map((part, idx) => {
+      if (part.startsWith("@")) {
+        return (
+          <span key={`${part}-${idx}`} className="text-emerald-600 font-medium">
+            {part}
+          </span>
+        );
+      }
+      return <span key={`${part}-${idx}`}>{part}</span>;
+    });
   };
 
   const handleAttachmentSelect = async (files: FileList | null) => {
@@ -1177,7 +1296,7 @@ export default function Chat() {
                   {filteredTaskGroups.map((entry) => {
                     const task = entry.task;
                     const isActive = task.id === activeTaskGroupId;
-                    const membersCount = entry.participantIds.length;
+                    const membersCount = entry.activeParticipantIds.length;
                     const unread = taskGroupUnreadCounts?.byTask?.[String(task.id)] || 0;
                     return (
                       <button
@@ -1278,7 +1397,7 @@ export default function Chat() {
                 <p className="text-xs text-muted-foreground">
                   {
                     isGroupMode
-                      ? `Participants: ${activeTaskParticipants.map((p) => p.name).join(", ")}`
+                      ? `Participants: ${activeTaskParticipants.map((p) => p.name).join(", ") || "No active participants"}`
                       : activeUser?.name
                         ? activeUserSubtitle
                         : "Select User"
@@ -1386,7 +1505,7 @@ export default function Chat() {
                       </p>
                     )}
                     {parsedMessage.text && (
-                      <p className="text-sm whitespace-pre-wrap break-words">{parsedMessage.text}</p>
+                      <p className="text-sm whitespace-pre-wrap break-words">{renderMessageText(parsedMessage.text)}</p>
                     )}
                     {parsedMessage.attachments.length > 0 && (
                       <div className="mt-2 space-y-2">
@@ -1520,7 +1639,7 @@ export default function Chat() {
             </div>
           )}
           <form
-            className="flex gap-2"
+            className="relative flex gap-2"
             onSubmit={async (e) => {
               e.preventDefault();
               await handleSend();
@@ -1536,8 +1655,15 @@ export default function Chat() {
               <Paperclip className="w-4 h-4" />
             </Button>
             <Input
+              ref={draftInputRef}
               value={draft}
               onChange={(e) => handleDraftChange(e.target.value)}
+              onKeyDown={(e) => {
+                if (isMentionOpen && mentionCandidates[0] && e.key === "Enter") {
+                  e.preventDefault();
+                  insertMention(getMentionLabel(mentionCandidates[0]));
+                }
+              }}
               onPaste={(e) => {
                 const files = e.clipboardData?.files;
                 if (files && files.length > 0) {
@@ -1549,6 +1675,36 @@ export default function Chat() {
               disabled={!showConversationPanel || isActiveUserDeleted || sendPending}
               className="h-11"
             />
+            {isGroupMode && isMentionOpen && (
+              <div className="absolute bottom-[calc(100%+0.5rem)] left-14 right-16 rounded-md border border-border bg-background p-2 shadow-lg">
+                <p className="mb-1 px-1 text-[11px] text-muted-foreground">Mention task participants</p>
+                {mentionCandidates.length === 0 ? (
+                  <p className="px-1 py-1 text-xs text-muted-foreground">No matching participants.</p>
+                ) : (
+                  mentionCandidates.map((member) => {
+                    const label = getMentionLabel(member);
+                    return (
+                      <button
+                        key={member.id}
+                        type="button"
+                        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-muted"
+                        onClick={() => insertMention(label)}
+                      >
+                        <Avatar className="h-6 w-6 border border-primary/10">
+                          <AvatarFallback className="text-[10px] bg-primary/5 text-primary">
+                            {member.name.split(" ").map((n) => n[0]).join("").toUpperCase()}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="min-w-0">
+                          <p className="truncate text-xs font-medium">{member.name}</p>
+                          <p className="truncate text-[11px] text-muted-foreground">@{label}</p>
+                        </div>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            )}
             <Button
               type="submit"
               disabled={!showConversationPanel || isActiveUserDeleted || (!draft.trim() && draftAttachments.length === 0) || sendPending}

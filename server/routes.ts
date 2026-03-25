@@ -89,6 +89,19 @@ function getTaskParticipantIds(task: any): number[] {
   return Array.from(ids);
 }
 
+async function getActiveTaskParticipants(task: any) {
+  const participantIds = getTaskParticipantIds(task);
+  if (participantIds.length === 0) return [];
+  const allUsers = await storage.getUsers();
+  return allUsers.filter((member) => participantIds.includes(member.id));
+}
+
+async function canTaskHaveGroupChat(task: any): Promise<boolean> {
+  const activeParticipants = await getActiveTaskParticipants(task);
+  const activeNonAdminParticipants = activeParticipants.filter((member) => !isAdminUser(member));
+  return activeNonAdminParticipants.length >= 2;
+}
+
 function normalizeMentionToken(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9._-]/g, "");
 }
@@ -1183,8 +1196,7 @@ export async function registerRoutes(
         ...input,
         createdById: req.user.id,
       });
-      const createdParticipants = getTaskParticipantIds(task);
-      if (task.status !== "done" && createdParticipants.length >= 2) {
+      if (task.status !== "done" && await canTaskHaveGroupChat(task)) {
         await storage.ensureTaskChatGroup(task.id, req.user.id);
       }
       await pushTaskUpdateToRelevantUsers("created", task);
@@ -1241,8 +1253,7 @@ export async function registerRoutes(
       const { createdById: _createdById, ...safeInput } = (input as any) || {};
 
       const updated = await storage.updateTask(id, safeInput);
-      const updatedParticipants = getTaskParticipantIds(updated);
-      if (updated.status !== "done" && updatedParticipants.length >= 2) {
+      if (updated.status !== "done" && await canTaskHaveGroupChat(updated)) {
         await storage.ensureTaskChatGroup(updated.id, req.user.id);
       }
       await pushTaskUpdateToRelevantUsers("updated", updated);
@@ -1538,6 +1549,7 @@ export async function registerRoutes(
       const task = await storage.getTask(group.taskId);
       if (!task) continue;
       if (task.status === "done") continue;
+      if (!(await canTaskHaveGroupChat(task))) continue;
       const participantIds = getTaskParticipantIds(task);
       if (!participantIds.includes(req.user.id)) continue;
       result.push({ group, task, participantIds });
@@ -1558,6 +1570,7 @@ export async function registerRoutes(
       const task = await storage.getTask(group.taskId);
       if (!task) continue;
       if (task.status === "done") continue;
+      if (!(await canTaskHaveGroupChat(task))) continue;
       const participantIds = getTaskParticipantIds(task);
       if (!participantIds.includes(req.user.id)) continue;
 
@@ -1590,6 +1603,9 @@ export async function registerRoutes(
     }
     if (task.status === "done") {
       return res.status(400).json({ message: "Task group chat is unavailable for done tasks" });
+    }
+    if (!(await canTaskHaveGroupChat(task))) {
+      return res.status(400).json({ message: "Task group chat requires at least 3 active participants" });
     }
     if (!canUserAccessTask(req.user, task)) {
       return res.status(403).json({ message: "Not authorized to create this task group" });
@@ -1625,6 +1641,9 @@ export async function registerRoutes(
     if (task.status === "done") {
       return res.status(404).json({ message: "Task group not available for done tasks" });
     }
+    if (!(await canTaskHaveGroupChat(task))) {
+      return res.status(404).json({ message: "Task group not available for tasks with fewer than 3 active participants" });
+    }
     if (!canUserAccessTask(req.user, task)) {
       return res.status(403).json({ message: "Not authorized to access this task group" });
     }
@@ -1651,6 +1670,9 @@ export async function registerRoutes(
     if (task.status === "done") {
       return res.status(400).json({ message: "Task group chat is unavailable for done tasks" });
     }
+    if (!(await canTaskHaveGroupChat(task))) {
+      return res.status(400).json({ message: "Task group chat requires at least 3 active participants" });
+    }
     if (!canUserAccessTask(req.user, task)) {
       return res.status(403).json({ message: "Not authorized to message this task group" });
     }
@@ -1665,6 +1687,18 @@ export async function registerRoutes(
       });
 
       const participantIds = getTaskParticipantIds(task);
+      const assignedUserIds = getAssignedUserIds(task);
+      const allUsers = await storage.getUsers();
+      const mentionedIds = extractMentionedUserIds(input.content, allUsers);
+      const mentionRecipients = new Set<number>();
+
+      mentionedIds.forEach((id) => {
+        if (assignedUserIds.includes(id)) {
+          mentionRecipients.add(id);
+        }
+      });
+      mentionRecipients.delete(req.user.id);
+
       participantIds.forEach((participantId) => {
         emitToUser(participantId, {
           type: "task-group:new",
@@ -1674,6 +1708,7 @@ export async function registerRoutes(
 
       const notificationRecipients = participantIds.filter((participantId) => {
         if (participantId === req.user.id) return false;
+        if (mentionRecipients.has(participantId)) return false;
         return !isUserViewingTaskGroup(participantId, taskId);
       });
       if (notificationRecipients.length > 0) {
@@ -1682,6 +1717,16 @@ export async function registerRoutes(
           description: `${req.user.name} sent a message in "${task.title}".`,
           actorUserId: req.user.id,
           type: "task_group_message",
+          entityType: "task",
+          entityId: taskId,
+        });
+      }
+      if (mentionRecipients.size > 0) {
+        await emitNotification(mentionRecipients, {
+          title: "You were mentioned",
+          description: `${req.user.name} mentioned you in "${task.title}".`,
+          actorUserId: req.user.id,
+          type: "task_group_mention",
           entityType: "task",
           entityId: taskId,
         });
