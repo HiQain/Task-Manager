@@ -31,23 +31,28 @@ type ClientCredProject = {
 
 type AccessMap = Record<number, "view" | "edit" | null>;
 
+type CredentialMode = "email" | "phone" | "custom";
+
+type CredentialFormRow = {
+  mode: CredentialMode;
+  via: string;
+  value: string;
+  password: string;
+};
+
 type ProjectFormState = {
   clientName: string;
   projectName: string;
-  viaChannels: string[];
-  emails: string[];
-  passwords: string[];
+  rows: CredentialFormRow[];
 };
 
 const emptyFormState = (): ProjectFormState => ({
   clientName: "",
   projectName: "",
-  viaChannels: [""],
-  emails: [""],
-  passwords: [""],
+  rows: [{ mode: "email", via: "Email", value: "", password: "" }],
 });
 
-function sanitizeList(values: string[]): string[] {
+function sanitizeValueList(values: string[]): string[] {
   return values.map((value) => value.trim()).filter(Boolean);
 }
 
@@ -56,62 +61,34 @@ function formatDate(value: string | Date | null | undefined): string {
   return new Date(value).toLocaleString();
 }
 
-function ListFieldEditor({
-  label,
-  placeholder,
-  values,
-  setValues,
-  type = "text",
-}: {
-  label: string;
-  placeholder: string;
-  values: string[];
-  setValues: Dispatch<SetStateAction<string[]>>;
-  type?: string;
-}) {
-  return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-sm font-medium">{label}</p>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => setValues((prev) => [...prev, ""])}
-        >
-          <Plus className="h-4 w-4" />
-          Add more
-        </Button>
-      </div>
-      <div className="space-y-2">
-        {values.map((value, index) => (
-          <div key={`${label}-${index}`} className="flex items-center gap-2">
-            <Input
-              type={type}
-              value={value}
-              placeholder={placeholder}
-              onChange={(e) => {
-                const nextValue = e.target.value;
-                setValues((prev) => prev.map((entry, entryIndex) => (entryIndex === index ? nextValue : entry)));
-              }}
-            />
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="shrink-0"
-              disabled={values.length === 1}
-              onClick={() => {
-                setValues((prev) => (prev.length === 1 ? prev : prev.filter((_, entryIndex) => entryIndex !== index)));
-              }}
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+function inferCredentialMode(via: string): CredentialMode {
+  const normalized = via.trim().toLowerCase();
+  if (normalized === "email") return "email";
+  if (normalized === "phone") return "phone";
+  return "custom";
+}
+
+function createFormRow(mode: CredentialMode = "email"): CredentialFormRow {
+  return {
+    mode,
+    via: mode === "email" ? "Email" : mode === "phone" ? "Phone" : "",
+    value: "",
+    password: "",
+  };
+}
+
+function buildRowsFromProject(project: ClientCredProject): CredentialFormRow[] {
+  const maxRows = Math.max(project.viaChannels.length, project.emails.length, project.passwords.length, 1);
+  return Array.from({ length: maxRows }, (_, index) => {
+    const via = project.viaChannels[index] || "";
+    const mode = inferCredentialMode(via);
+    return {
+      mode,
+      via: via || (mode === "email" ? "Email" : mode === "phone" ? "Phone" : ""),
+      value: project.emails[index] || "",
+      password: project.passwords[index] || "",
+    };
+  });
 }
 
 export default function ClientCreds() {
@@ -208,29 +185,39 @@ export default function ClientCreds() {
     setFormState({
       clientName: selectedProject.clientName,
       projectName: selectedProject.projectName,
-      viaChannels: selectedProject.viaChannels.length > 0 ? selectedProject.viaChannels : [""],
-      emails: selectedProject.emails.length > 0 ? selectedProject.emails : [""],
-      passwords: selectedProject.passwords.length > 0 ? selectedProject.passwords : [""],
+      rows: buildRowsFromProject(selectedProject),
     });
     setFormError("");
     setFormOpen(true);
   };
 
   const submitForm = async () => {
+    const normalizedRows = formState.rows
+      .map((row) => ({
+        via: row.mode === "email" ? "Email" : row.mode === "phone" ? "Phone" : row.via.trim(),
+        value: row.value.trim(),
+        password: row.password.trim(),
+      }))
+      .filter((row) => row.via || row.value || row.password);
+
     const payload = {
       clientName: formState.clientName.trim(),
       projectName: formState.projectName.trim(),
-      viaChannels: sanitizeList(formState.viaChannels),
-      emails: sanitizeList(formState.emails),
-      passwords: sanitizeList(formState.passwords),
+      viaChannels: sanitizeValueList(normalizedRows.map((row) => row.via)),
+      emails: sanitizeValueList(normalizedRows.map((row) => row.value)),
+      passwords: sanitizeValueList(normalizedRows.map((row) => row.password)),
     };
 
     if (!payload.clientName || !payload.projectName) {
       setFormError("Client name and project name are required.");
       return;
     }
-    if (payload.viaChannels.length === 0 || payload.emails.length === 0 || payload.passwords.length === 0) {
-      setFormError("Via, email, and password each need at least one value.");
+    if (normalizedRows.length === 0) {
+      setFormError("At least one credentials row is required.");
+      return;
+    }
+    if (normalizedRows.some((row) => !row.via || !row.value || !row.password)) {
+      setFormError("Selected via ke neeche value aur password dono required hain.");
       return;
     }
 
@@ -566,28 +553,176 @@ export default function ClientCreds() {
                 </div>
               </div>
 
-              <ListFieldEditor
-                label="Via"
-                placeholder="Email, Twilio, WhatsApp, etc."
-                values={formState.viaChannels}
-                setValues={(value) => setFormState((prev) => ({ ...prev, viaChannels: typeof value === "function" ? value(prev.viaChannels) : value }))}
-              />
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-medium">Via</p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      setFormState((prev) => ({
+                        ...prev,
+                        rows: [...prev.rows, createFormRow()],
+                      }))
+                    }
+                  >
+                    <Plus className="h-4 w-4" />
+                    Add more
+                  </Button>
+                </div>
 
-              <ListFieldEditor
-                label="Email"
-                placeholder="client@example.com"
-                type="email"
-                values={formState.emails}
-                setValues={(value) => setFormState((prev) => ({ ...prev, emails: typeof value === "function" ? value(prev.emails) : value }))}
-              />
+                <div className="space-y-3">
+                  {formState.rows.map((row, index) => (
+                    <div key={`via-row-${index}`} className="rounded-lg border p-3 space-y-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-sm font-medium">Entry {index + 1}</p>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          disabled={formState.rows.length === 1}
+                          onClick={() =>
+                            setFormState((prev) => ({
+                              ...prev,
+                              rows: prev.rows.length === 1
+                                ? prev.rows
+                                : prev.rows.filter((_, rowIndex) => rowIndex !== index),
+                            }))
+                          }
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </div>
 
-              <ListFieldEditor
-                label="Password"
-                placeholder="Enter password"
-                type="text"
-                values={formState.passwords}
-                setValues={(value) => setFormState((prev) => ({ ...prev, passwords: typeof value === "function" ? value(prev.passwords) : value }))}
-              />
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Select Via Type</label>
+                        <select
+                          value={row.mode}
+                          onChange={(e) => {
+                            const nextMode = e.target.value as CredentialMode;
+                            setFormState((prev) => ({
+                              ...prev,
+                              rows: prev.rows.map((entry, entryIndex) =>
+                                entryIndex !== index
+                                  ? entry
+                                  : {
+                                      ...entry,
+                                      mode: nextMode,
+                                      via: nextMode === "email" ? "Email" : nextMode === "phone" ? "Phone" : "",
+                                      value: "",
+                                    },
+                              ),
+                            }));
+                          }}
+                          className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                        >
+                          <option value="email">Email</option>
+                          <option value="phone">Phone</option>
+                          <option value="custom">Custom Via</option>
+                        </select>
+                      </div>
+
+                      <div className="rounded-md border bg-muted/20 p-3 space-y-3">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                          <div>
+                            <p className="text-sm font-medium">
+                              {row.mode === "email" ? "Email selected" : row.mode === "phone" ? "Phone selected" : "Custom via selected"}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {row.mode === "email"
+                                ? "Neeche email add karein."
+                                : row.mode === "phone"
+                                  ? "Neeche phone number add karein."
+                                  : "Neeche custom via aur uski value add karein."}
+                            </p>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() =>
+                              setFormState((prev) => ({
+                                ...prev,
+                                rows: [
+                                  ...prev.rows.slice(0, index + 1),
+                                  createFormRow(row.mode),
+                                  ...prev.rows.slice(index + 1),
+                                ],
+                              }))
+                            }
+                          >
+                            <Plus className="h-4 w-4" />
+                            {row.mode === "email" ? "Add more email" : row.mode === "phone" ? "Add more phone" : "Add more custom via"}
+                          </Button>
+                        </div>
+
+                        {row.mode === "custom" && (
+                          <div className="space-y-2">
+                            <label className="text-sm font-medium">Custom Via</label>
+                            <Input
+                              value={row.via}
+                              placeholder="Twilio / WhatsApp / Portal"
+                              onChange={(e) =>
+                                setFormState((prev) => ({
+                                  ...prev,
+                                  rows: prev.rows.map((entry, entryIndex) =>
+                                    entryIndex === index ? { ...entry, via: e.target.value } : entry,
+                                  ),
+                                }))
+                              }
+                            />
+                          </div>
+                        )}
+
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <div className="space-y-2">
+                            <label className="text-sm font-medium">
+                              {row.mode === "email" ? "Email" : row.mode === "phone" ? "Phone Number" : "Value"}
+                            </label>
+                            <Input
+                              type={row.mode === "email" ? "email" : "text"}
+                              value={row.value}
+                              placeholder={
+                                row.mode === "email"
+                                  ? "client@example.com"
+                                  : row.mode === "phone"
+                                    ? "+1 234 567 890"
+                                    : "Enter custom value"
+                              }
+                              onChange={(e) =>
+                                setFormState((prev) => ({
+                                  ...prev,
+                                  rows: prev.rows.map((entry, entryIndex) =>
+                                    entryIndex === index ? { ...entry, value: e.target.value } : entry,
+                                  ),
+                                }))
+                              }
+                            />
+                          </div>
+
+                          <div className="space-y-2">
+                            <label className="text-sm font-medium">Password</label>
+                            <Input
+                              type="text"
+                              value={row.password}
+                              placeholder="Enter password"
+                              onChange={(e) =>
+                                setFormState((prev) => ({
+                                  ...prev,
+                                  rows: prev.rows.map((entry, entryIndex) =>
+                                    entryIndex === index ? { ...entry, password: e.target.value } : entry,
+                                  ),
+                                }))
+                              }
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
 
               {formMode === "create" && (
                 <div className="space-y-2">
