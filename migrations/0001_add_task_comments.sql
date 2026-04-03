@@ -1,4 +1,4 @@
-CREATE TABLE `task_comments` (
+CREATE TABLE IF NOT EXISTS `task_comments` (
   `id` int AUTO_INCREMENT PRIMARY KEY,
   `task_id` int NOT NULL,
   `user_id` int NOT NULL,

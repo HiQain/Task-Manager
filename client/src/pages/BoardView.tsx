@@ -371,7 +371,7 @@ export default function BoardView() {
                       ref={provided.innerRef}
                       className={`h-full transition-colors ${snapshot.isDraggingOver ? "bg-muted/50 rounded-lg" : ""}`}
                     >
-                      {tasksByStatus[column.id]?.map((task, index) => (
+                      {tasksByStatus[column.id]?.map((task: Task, index: number) => (
                         <TaskCard
                           key={task.id}
                           task={task}

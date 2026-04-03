@@ -95,7 +95,7 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
   const attachments = form.watch("attachments") || [];
   const dueDate = form.watch("dueDate");
   const assignedToIds = form.watch("assignedToIds") || [];
-  const selectedDueDate = parseInputDateValue(dueDate);
+  const selectedDueDate = parseInputDateValue(dueDate ?? undefined);
 
   const appendAttachments = async (files: FileList | null) => {
     if (!files || files.length === 0) return;

@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { Bell, LayoutDashboard, Kanban, ListTodo, Plus, Users, Shield, MessageSquare, HardDrive, AlarmClock } from "lucide-react";
+import { Bell, LayoutDashboard, Kanban, ListTodo, Plus, Users, Shield, MessageSquare, HardDrive, AlarmClock, KeyRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/use-auth";
 import { useTaskGroupUnreadCounts, useUnreadCounts } from "@/hooks/use-chat";
@@ -469,6 +469,7 @@ export function Sidebar({
     ? (users || []).find((member) => member.id === callUserId)?.name || `User ${callUserId}`
     : "Unknown user";
   const canAccessStorage = !!user?.allowStorage;
+  const canAccessClientCreds = user?.role === "admin" || !!user?.allowClientCreds;
 
   // All admin items
   const adminNavItems = [
@@ -480,6 +481,7 @@ export function Sidebar({
     { label: "Chat", icon: MessageSquare, href: "/chat" },
     { label: "Notifications", icon: Bell, href: "/notifications" },
     ...(canAccessStorage ? [{ label: "Storage", icon: HardDrive, href: "/storage" }] : []),
+    ...(canAccessClientCreds ? [{ label: "Client Creds", icon: KeyRound, href: "/client-creds" }] : []),
   ];
 
   // User only sees tasks for drag & drop
@@ -491,6 +493,7 @@ export function Sidebar({
     { label: "Chat", icon: MessageSquare, href: "/chat" },
     { label: "Notifications", icon: Bell, href: "/notifications" },
     ...(canAccessStorage ? [{ label: "Storage", icon: HardDrive, href: "/storage" }] : []),
+    ...(canAccessClientCreds ? [{ label: "Client Creds", icon: KeyRound, href: "/client-creds" }] : []),
   ];
 
   const navItems = user?.role === "admin" ? adminNavItems : userNavItems;

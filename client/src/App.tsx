@@ -28,6 +28,7 @@ import Notifications from "@/pages/Notifications";
 import Profile from "@/pages/Profile";
 import Storage from "@/pages/Storage";
 import Reminder from "@/pages/Reminder";
+import ClientCreds from "@/pages/ClientCreds";
 
 function Router() {
   const { user } = useAuth();
@@ -96,6 +97,12 @@ function Router() {
         </ProtectedRoute>
       </Route>
 
+      <Route path="/client-creds">
+        <ProtectedRoute>
+          <ClientCreds />
+        </ProtectedRoute>
+      </Route>
+
       <Route path="/admin">
         <ProtectedRoute requiredRole="admin">
           <AdminConsole />
@@ -130,6 +137,7 @@ function Layout({ children }: { children: React.ReactNode }) {
       case "/profile": return "Profile";
       case "/storage": return "Storage";
       case "/reminder": return "Reminder";
+      case "/client-creds": return "Client Creds";
       default: return "";
     }
   };

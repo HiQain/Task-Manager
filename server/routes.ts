@@ -73,6 +73,10 @@ function hasStorageFeature(user: any): boolean {
   return !!user && !!user.allowStorage;
 }
 
+function hasClientCredsFeature(user: any): boolean {
+  return !!user && (isAdminUser(user) || !!user.allowClientCreds);
+}
+
 function isDeletedUser(user: any): boolean {
   const email = String(user?.email || "").toLowerCase();
   const password = String(user?.password || "");
@@ -141,6 +145,26 @@ function extractMentionedUserIds(
   });
 
   return Array.from(mentionedIds);
+}
+
+function parseStringList(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map((entry) => String(entry || "").trim()).filter(Boolean);
+  }
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed)) {
+        return parsed.map((entry) => String(entry || "").trim()).filter(Boolean);
+      }
+    } catch {
+      return value
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+    }
+  }
+  return [];
 }
 
 export async function registerRoutes(
@@ -681,6 +705,7 @@ export async function registerRoutes(
       const user = await storage.createUser({
         ...input,
         allowStorage: input.role === "admin" ? true : !!input.allowStorage,
+        allowClientCreds: input.role === "admin" ? true : !!input.allowClientCreds,
       });
       res.status(201).json(user);
     } catch (err) {
@@ -718,9 +743,16 @@ export async function registerRoutes(
           : input.allowStorage !== undefined
             ? !!input.allowStorage
             : !!existing.allowStorage;
+      const mergedAllowClientCreds =
+        mergedRole === "admin"
+          ? true
+          : input.allowClientCreds !== undefined
+            ? !!input.allowClientCreds
+            : !!existing.allowClientCreds;
       const updatedUser = await storage.updateUser(id, {
         ...input,
         allowStorage: mergedAllowStorage,
+        allowClientCreds: mergedAllowClientCreds,
       });
       res.json(updatedUser);
     } catch (err) {
@@ -1138,6 +1170,259 @@ export async function registerRoutes(
               actorUserId: req.user.id,
               type: "storage_access_granted",
               entityType: "storage_project",
+              entityId: project.id,
+            }),
+          ),
+        );
+      }
+      res.json({ success: true });
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({
+          message: err.errors[0].message,
+          field: err.errors[0].path.join("."),
+        });
+      }
+      throw err;
+    }
+  });
+
+  // Client Creds API
+  app.get(api.clientCreds.list.path, async (req, res) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    if (!hasClientCredsFeature(req.user)) {
+      return res.status(403).json({ message: "Client creds access is disabled for your account" });
+    }
+
+    const allUsers = await storage.getUsers();
+    const usersById = new Map(allUsers.map((u) => [u.id, u]));
+    const projects = await storage.getClientCredProjects();
+    const resolvedProjects = await Promise.all(
+      projects.map(async (project) => {
+        const accesses = await storage.getClientCredProjectAccesses(project.id);
+        const ownAccess = accesses.find((entry) => entry.userId === req.user.id);
+        const canDelete = isAdminUser(req.user) || project.createdById === req.user.id;
+        const canEdit = canDelete || ownAccess?.access === "edit";
+        const canView = canEdit || ownAccess?.access === "view";
+        if (!canView) return null;
+
+        const members = accesses
+          .map((member) => {
+            const memberUser = usersById.get(member.userId);
+            if (!memberUser) return null;
+            return {
+              userId: member.userId,
+              name: memberUser.name,
+              access: member.access === "edit" ? "edit" as const : "view" as const,
+            };
+          })
+          .filter((value): value is { userId: number; name: string; access: "view" | "edit" } => !!value);
+
+        return {
+          id: project.id,
+          clientName: project.clientName,
+          projectName: project.projectName,
+          viaChannels: parseStringList(project.viaChannels),
+          emails: parseStringList(project.emails),
+          passwords: parseStringList(project.passwords),
+          createdAt: project.createdAt,
+          updatedAt: project.updatedAt,
+          canEdit,
+          canDelete,
+          members,
+        };
+      }),
+    );
+
+    res.json({
+      projects: resolvedProjects.filter((project): project is NonNullable<typeof project> => !!project),
+    });
+  });
+
+  app.post(api.clientCreds.createProject.path, async (req, res) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    if (!hasClientCredsFeature(req.user)) {
+      return res.status(403).json({ message: "Client creds access is disabled for your account" });
+    }
+
+    try {
+      const input = api.clientCreds.createProject.input.parse(req.body);
+      const project = await storage.createClientCredProject({
+        clientName: input.clientName,
+        projectName: input.projectName,
+        viaChannels: input.viaChannels,
+        emails: input.emails,
+        passwords: input.passwords,
+        members: input.members,
+        createdById: req.user.id,
+      });
+      const allUsers = await storage.getUsers();
+      const allowedUserIds = new Set(
+        allUsers
+          .filter((member) => member.role === "admin" || !!member.allowClientCreds)
+          .map((member) => member.id),
+      );
+      const members: Array<{ userId: number; access: "view" | "edit" }> = Array.from(
+        new Map(
+          (input.members || [])
+            .filter((member) =>
+              Number.isFinite(member.userId) &&
+              member.userId !== req.user.id &&
+              allowedUserIds.has(member.userId),
+            )
+            .map((member) => [member.userId, { userId: member.userId, access: member.access === "edit" ? "edit" as const : "view" as const }]),
+        ).values(),
+      );
+      await storage.replaceClientCredProjectAccesses(project.id, members);
+      if (members.length > 0) {
+        await Promise.all(
+          members.map((member) =>
+            emitNotification([member.userId], {
+              title: "Client Creds Access Granted",
+              description: `${req.user.name} gave you ${member.access} access to client creds "${project.clientName} / ${project.projectName}".`,
+              actorUserId: req.user.id,
+              type: "client_creds_access_granted",
+              entityType: "client_cred_project",
+              entityId: project.id,
+            }),
+          ),
+        );
+      }
+      res.status(201).json(project);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({
+          message: err.errors[0].message,
+          field: err.errors[0].path.join("."),
+        });
+      }
+      throw err;
+    }
+  });
+
+  app.patch(api.clientCreds.updateProject.path, async (req, res) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    if (!hasClientCredsFeature(req.user)) {
+      return res.status(403).json({ message: "Client creds access is disabled for your account" });
+    }
+    const projectId = Number(req.params.id);
+    if (!Number.isFinite(projectId)) {
+      return res.status(400).json({ message: "Invalid project id" });
+    }
+
+    const project = await storage.getClientCredProject(projectId);
+    if (!project) {
+      return res.status(404).json({ message: "Project not found" });
+    }
+    const accessRows = await storage.getClientCredProjectAccesses(projectId);
+    const ownAccess = accessRows.find((entry) => entry.userId === req.user.id);
+    const canEdit = isAdminUser(req.user) || project.createdById === req.user.id || ownAccess?.access === "edit";
+    if (!canEdit) {
+      return res.status(403).json({ message: "Edit access required" });
+    }
+
+    try {
+      const input = api.clientCreds.updateProject.input.parse(req.body);
+      const updated = await storage.updateClientCredProject(projectId, input);
+      res.json(updated);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({
+          message: err.errors[0].message,
+          field: err.errors[0].path.join("."),
+        });
+      }
+      throw err;
+    }
+  });
+
+  app.delete(api.clientCreds.deleteProject.path, async (req, res) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    if (!hasClientCredsFeature(req.user)) {
+      return res.status(403).json({ message: "Client creds access is disabled for your account" });
+    }
+    const projectId = Number(req.params.id);
+    if (!Number.isFinite(projectId)) {
+      return res.status(400).json({ message: "Invalid project id" });
+    }
+
+    const project = await storage.getClientCredProject(projectId);
+    if (!project) {
+      return res.status(404).json({ message: "Project not found" });
+    }
+    const canDelete = isAdminUser(req.user) || project.createdById === req.user.id;
+    if (!canDelete) {
+      return res.status(403).json({ message: "Only project owner/admin can delete project" });
+    }
+
+    await storage.deleteClientCredProject(projectId);
+    res.json({ success: true });
+  });
+
+  app.post(api.clientCreds.updateAccess.path, async (req, res) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    if (!hasClientCredsFeature(req.user)) {
+      return res.status(403).json({ message: "Client creds access is disabled for your account" });
+    }
+    const projectId = Number(req.params.id);
+    if (!Number.isFinite(projectId)) {
+      return res.status(400).json({ message: "Invalid project id" });
+    }
+
+    const project = await storage.getClientCredProject(projectId);
+    if (!project) {
+      return res.status(404).json({ message: "Project not found" });
+    }
+    const canManage = isAdminUser(req.user) || project.createdById === req.user.id;
+    if (!canManage) {
+      return res.status(403).json({ message: "Only project owner/admin can manage access" });
+    }
+
+    try {
+      const input = api.clientCreds.updateAccess.input.parse(req.body);
+      const allUsers = await storage.getUsers();
+      const allowedUserIds = new Set(
+        allUsers
+          .filter((member) => member.role === "admin" || !!member.allowClientCreds)
+          .map((member) => member.id),
+      );
+      const previousAccessRows = await storage.getClientCredProjectAccesses(project.id);
+      const previousByUserId = new Map(previousAccessRows.map((row) => [row.userId, row.access]));
+      const members: Array<{ userId: number; access: "view" | "edit" }> = Array.from(
+        new Map(
+          (input.members || [])
+            .filter((member) =>
+              Number.isFinite(member.userId) &&
+              member.userId !== project.createdById &&
+              allowedUserIds.has(member.userId),
+            )
+            .map((member) => [member.userId, { userId: member.userId, access: member.access === "edit" ? "edit" as const : "view" as const }]),
+        ).values(),
+      );
+      await storage.replaceClientCredProjectAccesses(project.id, members);
+      const newlyGranted = members.filter((member) => {
+        const previousAccess = previousByUserId.get(member.userId);
+        return !previousAccess || previousAccess !== member.access;
+      });
+      if (newlyGranted.length > 0) {
+        await Promise.all(
+          newlyGranted.map((member) =>
+            emitNotification([member.userId], {
+              title: "Client Creds Access Updated",
+              description: `${req.user.name} gave you ${member.access} access to client creds "${project.clientName} / ${project.projectName}".`,
+              actorUserId: req.user.id,
+              type: "client_creds_access_granted",
+              entityType: "client_cred_project",
               entityId: project.id,
             }),
           ),
@@ -1825,10 +2110,22 @@ async function seedDatabase() {
         password: "password",
         role: "admin",
         allowStorage: true,
+        allowClientCreds: true,
       });
       console.log(`✅ Created admin user with ID: ${admin.id}, password hash: ${admin.password}`);
       console.log("✅ Database seeded with users and tasks!");
     } else {
+      await Promise.all(
+        existingUsers
+          .filter((member) => member.role === "admin" && (!member.allowStorage || !member.allowClientCreds))
+          .map((member) =>
+            storage.updateUser(member.id, {
+              allowStorage: true,
+              allowClientCreds: true,
+            }),
+          ),
+      );
+
       const legacyAdmin = existingUsers.find(
         (member) =>
           member.role === "admin" && member.email.trim().toLowerCase() === "admin@example.com",

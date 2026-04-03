@@ -52,6 +52,7 @@ export default function Users() {
     password: "",
     role: "user" as "user" | "admin",
     allowStorage: false,
+    allowClientCreds: false,
   });
 
   // Redirect non-admin users to dashboard
@@ -70,6 +71,7 @@ export default function Users() {
       password: "",
       role: "user",
       allowStorage: false,
+      allowClientCreds: false,
     },
   });
 
@@ -121,10 +123,10 @@ export default function Users() {
 
   const closeEditDialog = () => {
     setEditingUserId(null);
-    setEditForm({ name: "", email: "", designation: "", password: "", role: "user", allowStorage: false });
+    setEditForm({ name: "", email: "", designation: "", password: "", role: "user", allowStorage: false, allowClientCreds: false });
   };
 
-  const openEditDialog = (member: { id: number; name: string; email: string; designation?: string | null; role: string; allowStorage?: boolean | null }) => {
+  const openEditDialog = (member: { id: number; name: string; email: string; designation?: string | null; role: string; allowStorage?: boolean | null; allowClientCreds?: boolean | null }) => {
     setEditingUserId(member.id);
     setEditForm({
       name: member.name,
@@ -133,6 +135,7 @@ export default function Users() {
       password: "",
       role: member.role === "admin" ? "admin" : "user",
       allowStorage: member.role === "admin" ? true : !!member.allowStorage,
+      allowClientCreds: member.role === "admin" ? true : !!member.allowClientCreds,
     });
   };
 
@@ -146,6 +149,7 @@ export default function Users() {
       designation: editForm.designation.trim(),
       role: editForm.role,
       allowStorage: editForm.allowStorage,
+      allowClientCreds: editForm.allowClientCreds,
     };
 
     const nextPassword = editForm.password.trim();
@@ -220,6 +224,7 @@ export default function Users() {
         const roleRaw = (row.role || "user").trim().toLowerCase();
         const role = roleRaw === "employee" ? "user" : roleRaw;
         const allowStorage = (row.allowStorage || "false").trim().toLowerCase() === "true";
+        const allowClientCreds = (row.allowClientCreds || "false").trim().toLowerCase() === "true";
         const password = (row.password || "").trim();
 
         if (!name || !email || !designation || !password) {
@@ -239,6 +244,7 @@ export default function Users() {
             password,
             role: role as "user" | "admin",
             allowStorage: role === "admin" ? true : allowStorage,
+            allowClientCreds: role === "admin" ? true : allowClientCreds,
           });
           successCount += 1;
         } catch (error) {
@@ -371,6 +377,7 @@ export default function Users() {
                               field.onChange(nextRole);
                               if (nextRole === "admin") {
                                 form.setValue("allowStorage", true, { shouldValidate: true, shouldDirty: true });
+                                form.setValue("allowClientCreds", true, { shouldValidate: true, shouldDirty: true });
                               }
                             }}
                             className="h-11 w-full rounded-md border border-input bg-background px-3 py-2"
@@ -398,6 +405,27 @@ export default function Users() {
                               disabled={form.watch("role") === "admin"}
                             />
                             Allow storage tab {form.watch("role") === "admin" ? "(always on for admin)" : ""}
+                          </label>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="allowClientCreds"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Client Creds Access</FormLabel>
+                        <FormControl>
+                          <label className="h-11 w-full rounded-md border border-input bg-background px-3 py-2 flex items-center gap-2 text-sm">
+                            <input
+                              type="checkbox"
+                              checked={!!field.value}
+                              onChange={(e) => field.onChange(e.target.checked)}
+                              disabled={form.watch("role") === "admin"}
+                            />
+                            Allow client creds tab {form.watch("role") === "admin" ? "(always on for admin)" : ""}
                           </label>
                         </FormControl>
                         <FormMessage />
@@ -455,19 +483,21 @@ export default function Users() {
                 <TableHead className="min-w-[180px]">Designation</TableHead>
                 <TableHead className="min-w-[120px]">Role</TableHead>
                 <TableHead className="min-w-[140px]">Storage</TableHead>
+                <TableHead className="min-w-[160px]">Client Creds</TableHead>
                 <TableHead className="text-right min-w-[100px]">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filteredUsers.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="h-36 text-center text-muted-foreground">
+                  <TableCell colSpan={7} className="h-36 text-center text-muted-foreground">
                     {search.trim() ? "No matching team member found." : "No users found."}
                   </TableCell>
                 </TableRow>
               ) : (
                 filteredUsers.map((member) => {
                   const storageAllowed = member.role === "admin" ? true : !!member.allowStorage;
+                  const clientCredsAllowed = member.role === "admin" ? true : !!member.allowClientCreds;
                   return (
                   <TableRow key={member.id} className="group hover:bg-muted/20">
                     <TableCell>
@@ -505,6 +535,16 @@ export default function Users() {
                           : "text-slate-600 bg-slate-50 border-slate-100"}
                       >
                         {storageAllowed ? "Allowed" : "Blocked"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Badge
+                        variant="outline"
+                        className={clientCredsAllowed
+                          ? "text-amber-700 bg-amber-50 border-amber-100"
+                          : "text-slate-600 bg-slate-50 border-slate-100"}
+                      >
+                        {clientCredsAllowed ? "Allowed" : "Blocked"}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right">
@@ -574,6 +614,7 @@ export default function Users() {
                     ...prev,
                     role: nextRole,
                     allowStorage: nextRole === "admin" ? true : prev.allowStorage,
+                    allowClientCreds: nextRole === "admin" ? true : prev.allowClientCreds,
                   }));
                 }}
                 className="h-10 w-full rounded-md border border-input bg-background px-3 py-2"
@@ -592,6 +633,18 @@ export default function Users() {
                   disabled={editForm.role === "admin"}
                 />
                 Allow storage tab {editForm.role === "admin" ? "(always on for admin)" : ""}
+              </label>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Client Creds Access</label>
+              <label className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={editForm.allowClientCreds}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, allowClientCreds: e.target.checked }))}
+                  disabled={editForm.role === "admin"}
+                />
+                Allow client creds tab {editForm.role === "admin" ? "(always on for admin)" : ""}
               </label>
             </div>
             <div className="space-y-2">

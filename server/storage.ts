@@ -1,5 +1,7 @@
 import { db } from "./db";
 import {
+  clientCredProjectAccesses,
+  clientCredProjects,
   messages,
   notifications,
   pushSubscriptions,
@@ -15,6 +17,7 @@ import {
   users,
   type Message,
   type InsertMessage,
+  type InsertClientCredProject,
   type InsertTaskGroupMessage,
   type InsertTaskComment,
   type InsertTaskChatGroup,
@@ -30,6 +33,8 @@ import {
   type Notification,
   type PushSubscription,
   type Reminder,
+  type ClientCredProject,
+  type ClientCredProjectAccess,
   type StorageFile,
   type StorageProjectAccess,
   type StorageProject,
@@ -103,6 +108,18 @@ export interface IStorage {
   deleteStorageFile(id: number): Promise<void>;
   getStorageProjectAccesses(projectId: number): Promise<StorageProjectAccess[]>;
   replaceStorageProjectAccesses(projectId: number, members: Array<{ userId: number; access: "view" | "edit" }>): Promise<void>;
+
+  // Client creds
+  getClientCredProjects(): Promise<ClientCredProject[]>;
+  getClientCredProject(id: number): Promise<ClientCredProject | undefined>;
+  createClientCredProject(data: InsertClientCredProject & { createdById: number }): Promise<ClientCredProject>;
+  updateClientCredProject(
+    id: number,
+    data: Pick<InsertClientCredProject, "clientName" | "projectName" | "viaChannels" | "emails" | "passwords">
+  ): Promise<ClientCredProject>;
+  deleteClientCredProject(id: number): Promise<void>;
+  getClientCredProjectAccesses(projectId: number): Promise<ClientCredProjectAccess[]>;
+  replaceClientCredProjectAccesses(projectId: number, members: Array<{ userId: number; access: "view" | "edit" }>): Promise<void>;
 }
 
 function hashPassword(password: string): string {
@@ -187,6 +204,14 @@ function isDeletedUserRecord(record: Pick<User, "email" | "password">): boolean 
   return role === "deleted" || isDeletedUserEmail(record.email) || !!getDeletedOriginalEmail(record.password);
 }
 
+function serializeStringList(values: string[]): string {
+  return JSON.stringify(
+    values
+      .map((value) => String(value || "").trim())
+      .filter(Boolean),
+  );
+}
+
 export class DatabaseStorage implements IStorage {
   // Users Implementation
   async getUsers(): Promise<User[]> {
@@ -232,6 +257,7 @@ export class DatabaseStorage implements IStorage {
           password: hashPassword(insertUser.password),
           role: insertUser.role,
           allowStorage: insertUser.allowStorage ?? false,
+          allowClientCreds: insertUser.allowClientCreds ?? false,
         })
         .where(eq(users.id, deletedWithSameEmail.id));
 
@@ -821,6 +847,84 @@ export class DatabaseStorage implements IStorage {
     await db.delete(storageProjectAccesses).where(eq(storageProjectAccesses.projectId, projectId));
     if (members.length === 0) return;
     await db.insert(storageProjectAccesses).values(
+      members.map((member) => ({
+        projectId,
+        userId: member.userId,
+        access: member.access,
+      })),
+    );
+  }
+
+  async getClientCredProjects(): Promise<ClientCredProject[]> {
+    return await db.select().from(clientCredProjects).orderBy(desc(clientCredProjects.updatedAt), desc(clientCredProjects.createdAt));
+  }
+
+  async getClientCredProject(id: number): Promise<ClientCredProject | undefined> {
+    const [project] = await db.select().from(clientCredProjects).where(eq(clientCredProjects.id, id));
+    return project;
+  }
+
+  async createClientCredProject(data: InsertClientCredProject & { createdById: number }): Promise<ClientCredProject> {
+    const insertResult = await db.insert(clientCredProjects).values({
+      clientName: data.clientName,
+      projectName: data.projectName,
+      viaChannels: serializeStringList(data.viaChannels),
+      emails: serializeStringList(data.emails),
+      passwords: serializeStringList(data.passwords),
+      createdById: data.createdById,
+      updatedAt: new Date(),
+    });
+    const id = extractInsertId(insertResult);
+    const [project] = await db.select().from(clientCredProjects).where(eq(clientCredProjects.id, id));
+    if (!project) {
+      throw new Error("Failed to create client creds project");
+    }
+    return project;
+  }
+
+  async updateClientCredProject(
+    id: number,
+    data: Pick<InsertClientCredProject, "clientName" | "projectName" | "viaChannels" | "emails" | "passwords">
+  ): Promise<ClientCredProject> {
+    await db
+      .update(clientCredProjects)
+      .set({
+        clientName: data.clientName,
+        projectName: data.projectName,
+        viaChannels: serializeStringList(data.viaChannels),
+        emails: serializeStringList(data.emails),
+        passwords: serializeStringList(data.passwords),
+        updatedAt: new Date(),
+      })
+      .where(eq(clientCredProjects.id, id));
+
+    const [project] = await db.select().from(clientCredProjects).where(eq(clientCredProjects.id, id));
+    if (!project) {
+      throw new Error("Failed to update client creds project");
+    }
+    return project;
+  }
+
+  async deleteClientCredProject(id: number): Promise<void> {
+    await db.delete(clientCredProjectAccesses).where(eq(clientCredProjectAccesses.projectId, id));
+    await db.delete(clientCredProjects).where(eq(clientCredProjects.id, id));
+  }
+
+  async getClientCredProjectAccesses(projectId: number): Promise<ClientCredProjectAccess[]> {
+    return await db
+      .select()
+      .from(clientCredProjectAccesses)
+      .where(eq(clientCredProjectAccesses.projectId, projectId))
+      .orderBy(asc(clientCredProjectAccesses.id));
+  }
+
+  async replaceClientCredProjectAccesses(
+    projectId: number,
+    members: Array<{ userId: number; access: "view" | "edit" }>
+  ): Promise<void> {
+    await db.delete(clientCredProjectAccesses).where(eq(clientCredProjectAccesses.projectId, projectId));
+    if (members.length === 0) return;
+    await db.insert(clientCredProjectAccesses).values(
       members.map((member) => ({
         projectId,
         userId: member.userId,

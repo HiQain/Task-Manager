@@ -1,4 +1,5 @@
 import {
+  type AnyMySqlColumn,
   mysqlTable,
   text,
   longtext,
@@ -20,6 +21,7 @@ export const users = mysqlTable("users", {
     .default("5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8"),
   role: varchar("role", { length: 20 }).notNull().default("user"),
   allowStorage: boolean("allow_storage").notNull().default(false),
+  allowClientCreds: boolean("allow_client_creds").notNull().default(false),
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
 });
 
@@ -31,7 +33,7 @@ export const tasks = mysqlTable("tasks", {
   priority: varchar("priority", { length: 30 }).notNull().default("medium"),
   completed: boolean("completed").default(false),
   sortOrder: int("sort_order").notNull().default(0),
-  parentTaskId: int("parent_task_id").references(() => tasks.id),
+  parentTaskId: int("parent_task_id").references((): AnyMySqlColumn => tasks.id),
   assignedToId: int("assigned_to_id").references(() => users.id),
   assignedToIds: text("assigned_to_ids"),
   createdById: int("created_by_id").references(() => users.id),
@@ -166,6 +168,32 @@ export const storageProjectAccesses = mysqlTable(
   }),
 );
 
+export const clientCredProjects = mysqlTable("client_cred_projects", {
+  id: int("id").autoincrement().primaryKey(),
+  clientName: varchar("client_name", { length: 255 }).notNull(),
+  projectName: varchar("project_name", { length: 255 }).notNull(),
+  viaChannels: longtext("via_channels").notNull(),
+  emails: longtext("emails").notNull(),
+  passwords: longtext("passwords").notNull(),
+  createdById: int("created_by_id").notNull().references(() => users.id),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow(),
+});
+
+export const clientCredProjectAccesses = mysqlTable(
+  "client_cred_project_accesses",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    projectId: int("project_id").notNull().references(() => clientCredProjects.id),
+    userId: int("user_id").notNull().references(() => users.id),
+    access: varchar("access", { length: 16 }).notNull().default("view"),
+    createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
+  },
+  (table) => ({
+    projectUserUnique: uniqueIndex("client_cred_access_project_user_idx").on(table.projectId, table.userId),
+  }),
+);
+
 export const insertUserSchema = z.object({
   name: z.string().min(1),
   email: z.string().email(),
@@ -173,6 +201,7 @@ export const insertUserSchema = z.object({
   password: z.string().min(6, "Password must be at least 6 characters"),
   role: z.enum(["user", "admin"]).default("user"),
   allowStorage: z.boolean().default(false),
+  allowClientCreds: z.boolean().default(false),
 });
 
 export const insertTaskSchema = z.object({
@@ -287,6 +316,37 @@ export const updateStorageProjectAccessSchema = z.object({
   ),
 });
 
+const clientCredListFieldSchema = z
+  .array(z.string().trim().min(1))
+  .min(1, "At least one value is required");
+
+export const insertClientCredProjectSchema = z.object({
+  clientName: z.string().trim().min(1, "Client name is required").max(255),
+  projectName: z.string().trim().min(1, "Project name is required").max(255),
+  viaChannels: clientCredListFieldSchema,
+  emails: clientCredListFieldSchema,
+  passwords: clientCredListFieldSchema,
+  members: z
+    .array(
+      z.object({
+        userId: z.number().int(),
+        access: z.enum(["view", "edit"]),
+      }),
+    )
+    .optional(),
+});
+
+export const updateClientCredProjectSchema = insertClientCredProjectSchema.omit({ members: true });
+
+export const updateClientCredProjectAccessSchema = z.object({
+  members: z.array(
+    z.object({
+      userId: z.number().int(),
+      access: z.enum(["view", "edit"]),
+    }),
+  ),
+});
+
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type Task = typeof tasks.$inferSelect;
@@ -314,3 +374,8 @@ export type StorageFile = typeof storageFiles.$inferSelect;
 export type InsertStorageFile = z.infer<typeof insertStorageFileSchema>;
 export type StorageProjectAccess = typeof storageProjectAccesses.$inferSelect;
 export type UpdateStorageProjectAccess = z.infer<typeof updateStorageProjectAccessSchema>;
+export type ClientCredProject = typeof clientCredProjects.$inferSelect;
+export type InsertClientCredProject = z.infer<typeof insertClientCredProjectSchema>;
+export type UpdateClientCredProject = z.infer<typeof updateClientCredProjectSchema>;
+export type ClientCredProjectAccess = typeof clientCredProjectAccesses.$inferSelect;
+export type UpdateClientCredProjectAccess = z.infer<typeof updateClientCredProjectAccessSchema>;

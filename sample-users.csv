@@ -1,3 +1,4 @@
-name,email,designation,role,allowStorage,password
-Ali Raza,ali@example.com,Project Manager,employee,false,User@123
-Sara Khan,sara@example.com,Designer,employee,false,User@123
+name,          email,              designation,       role,       allowStorage,    allowClientCreds,    password
+
+Ali Raza,      ali@example.com,    Project Manager,   employee,   false,           false,               User@123
+Sara Khan,     sara@example.com,   Designer,          employee,   false,           false,               User@123

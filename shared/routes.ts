@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { insertMessageSchema, insertPushSubscriptionSchema, insertStorageFileSchema, insertStorageProjectSchema, insertTaskCommentSchema, insertTaskGroupMessageSchema, insertTaskSchema, insertUserSchema, messages, notifications, reminderSyncSchema, storageFiles, storageProjects, taskChatGroups, taskComments, taskGroupMessages, tasks, updateStorageProjectAccessSchema, users } from './schema';
+import { clientCredProjects, insertClientCredProjectSchema, insertMessageSchema, insertPushSubscriptionSchema, insertStorageFileSchema, insertStorageProjectSchema, insertTaskCommentSchema, insertTaskGroupMessageSchema, insertTaskSchema, insertUserSchema, messages, notifications, reminderSyncSchema, storageFiles, storageProjects, taskChatGroups, taskComments, taskGroupMessages, tasks, updateClientCredProjectAccessSchema, updateClientCredProjectSchema, updateStorageProjectAccessSchema, users } from './schema';
 
 export const errorSchemas = {
   validation: z.object({
@@ -92,6 +92,7 @@ export const api = {
         password: z.string().min(6, "Password must be at least 6 characters").optional(),
         role: z.enum(["user", "admin"]).optional(),
         allowStorage: z.boolean().optional(),
+        allowClientCreds: z.boolean().optional(),
       }),
       responses: {
         200: z.custom<typeof users.$inferSelect>(),
@@ -440,6 +441,81 @@ export const api = {
       method: 'POST' as const,
       path: '/api/storage/projects/:id/access',
       input: updateStorageProjectAccessSchema,
+      responses: {
+        200: z.object({ success: z.boolean() }),
+        400: errorSchemas.validation,
+        401: errorSchemas.notFound,
+        403: errorSchemas.notFound,
+        404: errorSchemas.notFound,
+      },
+    },
+  },
+  clientCreds: {
+    list: {
+      method: 'GET' as const,
+      path: '/api/client-creds/projects',
+      responses: {
+        200: z.object({
+          projects: z.array(
+            z.object({
+              id: z.number(),
+              clientName: z.string(),
+              projectName: z.string(),
+              viaChannels: z.array(z.string()),
+              emails: z.array(z.string()),
+              passwords: z.array(z.string()),
+              createdAt: z.any().nullable().optional(),
+              updatedAt: z.any().nullable().optional(),
+              canEdit: z.boolean(),
+              canDelete: z.boolean(),
+              members: z.array(
+                z.object({
+                  userId: z.number(),
+                  name: z.string(),
+                  access: z.enum(["view", "edit"]),
+                }),
+              ),
+            }),
+          ),
+        }),
+        401: errorSchemas.notFound,
+      },
+    },
+    createProject: {
+      method: 'POST' as const,
+      path: '/api/client-creds/projects',
+      input: insertClientCredProjectSchema,
+      responses: {
+        201: z.custom<typeof clientCredProjects.$inferSelect>(),
+        400: errorSchemas.validation,
+        401: errorSchemas.notFound,
+      },
+    },
+    updateProject: {
+      method: 'PATCH' as const,
+      path: '/api/client-creds/projects/:id',
+      input: updateClientCredProjectSchema,
+      responses: {
+        200: z.custom<typeof clientCredProjects.$inferSelect>(),
+        400: errorSchemas.validation,
+        401: errorSchemas.notFound,
+        404: errorSchemas.notFound,
+      },
+    },
+    deleteProject: {
+      method: 'DELETE' as const,
+      path: '/api/client-creds/projects/:id',
+      responses: {
+        200: z.object({ success: z.boolean() }),
+        400: errorSchemas.validation,
+        401: errorSchemas.notFound,
+        404: errorSchemas.notFound,
+      },
+    },
+    updateAccess: {
+      method: 'POST' as const,
+      path: '/api/client-creds/projects/:id/access',
+      input: updateClientCredProjectAccessSchema,
       responses: {
         200: z.object({ success: z.boolean() }),
         400: errorSchemas.validation,

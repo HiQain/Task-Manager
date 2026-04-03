@@ -38,7 +38,7 @@ export default function Notifications() {
       const serverIds: number[] = [];
       for (const notification of notifications || []) {
         if (isLocalNotification(notification)) {
-          deleteLocalNotification(notification.id);
+          deleteLocalNotification(String(notification.id));
         } else if (typeof notification.id === "number") {
           serverIds.push(notification.id);
         }
@@ -102,7 +102,7 @@ export default function Notifications() {
                           variant="secondary"
                           onClick={() => {
                             if (isLocal) {
-                              markLocalNotificationRead(notification.id);
+                              markLocalNotificationRead(String(notification.id));
                             } else {
                               markRead.mutate(notification.id);
                             }
@@ -119,7 +119,7 @@ export default function Notifications() {
                         variant="ghost"
                         onClick={() => {
                           if (isLocal) {
-                            deleteLocalNotification(notification.id);
+                            deleteLocalNotification(String(notification.id));
                           } else {
                             deleteNotification.mutate(notification.id);
                           }
