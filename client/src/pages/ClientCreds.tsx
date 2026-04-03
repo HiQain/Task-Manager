@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
 import { useUsers } from "@/hooks/use-users";
 import { api, buildUrl } from "@shared/routes";
 import { apiRequest } from "@/lib/queryClient";
-import { Eye, EyeOff, KeyRound, Pencil, Plus, ShieldCheck, Trash2, UserRound, X } from "lucide-react";
+import { Eye, EyeOff, KeyRound, Loader2, Pencil, Plus, ShieldCheck, Trash2, UserRound, X } from "lucide-react";
 
 type ProjectMember = {
   userId: number;
@@ -110,6 +111,8 @@ export default function ClientCreds() {
 
   const [accessDialogOpen, setAccessDialogOpen] = useState(false);
   const [manageAccessMap, setManageAccessMap] = useState<AccessMap>({});
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; label: string } | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const selectedProject = projects.find((project) => project.id === selectedProjectId) || null;
 
@@ -278,16 +281,24 @@ export default function ClientCreds() {
     }
   };
 
-  const deleteProject = async () => {
+  const openDeleteDialog = () => {
     if (!selectedProject || !selectedProject.canDelete) return;
-    const confirmed = window.confirm(`Delete client creds for "${selectedProject.clientName} / ${selectedProject.projectName}"?`);
-    if (!confirmed) return;
+    setDeleteTarget({
+      id: selectedProject.id,
+      label: `${selectedProject.clientName} / ${selectedProject.projectName}`,
+    });
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
 
     try {
+      setIsDeleting(true);
       await apiRequest(
         api.clientCreds.deleteProject.method,
-        buildUrl(api.clientCreds.deleteProject.path, { id: selectedProject.id }),
+        buildUrl(api.clientCreds.deleteProject.path, { id: deleteTarget.id }),
       );
+      setDeleteTarget(null);
       await loadProjects(null);
     } catch {
       toast({
@@ -295,6 +306,8 @@ export default function ClientCreds() {
         description: "Client creds could not be deleted.",
         variant: "destructive",
       });
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -410,7 +423,7 @@ export default function ClientCreds() {
                 </Button>
               )}
               {selectedProject?.canDelete && (
-                <Button type="button" variant="destructive" onClick={() => void deleteProject()}>
+                <Button type="button" variant="destructive" onClick={openDeleteDialog}>
                   <Trash2 className="h-4 w-4" />
                   Delete
                 </Button>
@@ -760,6 +773,25 @@ export default function ClientCreds() {
           </div>
         </div>
       )}
+
+      <Dialog open={deleteTarget !== null} onOpenChange={(open) => (!open ? setDeleteTarget(null) : undefined)}>
+        <DialogContent className="w-[calc(100vw-2rem)] sm:w-full sm:max-w-[420px] fixed !top-1/2 !left-1/2 !-translate-x-1/2 !-translate-y-1/2">
+          <DialogHeader>
+            <DialogTitle>Delete Client Creds</DialogTitle>
+            <DialogDescription>
+              {`Are you sure you want to delete client creds for ${deleteTarget?.label || "this record"}?`}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" type="button" onClick={() => setDeleteTarget(null)} disabled={isDeleting}>
+              Cancel
+            </Button>
+            <Button variant="destructive" type="button" onClick={() => void confirmDelete()} disabled={isDeleting}>
+              {isDeleting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Delete"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
