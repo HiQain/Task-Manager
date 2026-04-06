@@ -108,6 +108,24 @@ export function parseDateOnly(value?: string | Date | null): Date | null {
   return null;
 }
 
+export function isTaskOverdue(
+  status?: string | null,
+  dueDate?: string | Date | null,
+  referenceDate: Date = new Date(),
+): boolean {
+  if (status === "done") return false;
+  const parsedDueDate = parseDateOnly(dueDate);
+  if (!parsedDueDate) return false;
+
+  const startOfToday = new Date(
+    referenceDate.getFullYear(),
+    referenceDate.getMonth(),
+    referenceDate.getDate(),
+  );
+
+  return parsedDueDate.getTime() < startOfToday.getTime();
+}
+
 export function formatShortDate(value?: Date | null): string {
   if (!value) return "-";
   return new Intl.DateTimeFormat("en-US", {

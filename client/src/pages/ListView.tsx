@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Loader2, Pencil, RotateCcw, Trash2, CalendarDays, GripVertical, User as UserIcon, Unlink } from "lucide-react";
-import { formatShortDate, formatTaskDescription, parseDateOnly } from "@/lib/utils";
+import { cn, formatShortDate, formatTaskDescription, isTaskOverdue, parseDateOnly } from "@/lib/utils";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useAuth } from "@/hooks/use-auth";
 
@@ -177,7 +177,7 @@ export default function ListView() {
       }
 
       if (dueFilter === "overdue") {
-        if (!hasDueDate || dueTime === null || dueTime >= startOfTodayTime) return false;
+        if (!isTaskOverdue(task.status, task.dueDate as any)) return false;
       } else if (dueFilter === "today") {
         if (!hasDueDate || dueTime === null || dueTime < startOfTodayTime || dueTime > endOfTodayTime) return false;
       } else if (dueFilter === "upcoming") {
@@ -497,7 +497,7 @@ export default function ListView() {
         </Badge>
       </div>
       <div>
-        <div className="flex items-center text-xs text-muted-foreground">
+        <div className={cn("flex items-center text-xs text-muted-foreground", isTaskOverdue(task.status, task.dueDate as any) && "text-red-700 font-medium")}>
           <CalendarDays className="w-3 h-3 mr-1.5" />
           {(() => {
             const parsedDueDate = parseDateOnly(task.dueDate as any);

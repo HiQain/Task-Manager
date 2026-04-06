@@ -8,7 +8,7 @@ import { useUsers } from "@/hooks/use-users";
 import { useCreateTaskComment, useTaskComments } from "@/hooks/use-task-comments";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/hooks/use-auth";
-import { formatTaskDescription, formatShortDate, parseDateOnly } from "@/lib/utils";
+import { cn, formatTaskDescription, formatShortDate, isTaskOverdue, parseDateOnly } from "@/lib/utils";
 import { useEffect, useMemo, useState } from "react";
 
 interface Props {
@@ -91,6 +91,8 @@ export function TaskDetailDialog({ open, onOpenChange, task }: Props) {
   const isCreatedByMe = !!user?.id && task.createdById === user.id;
   const isAssignedToMe = !!user?.id && assignedToIds.includes(user.id);
   const canComment = !!user?.id && (isCreatedByMe || isAssignedToMe || user?.role === "admin");
+  const parsedDueDate = parseDateOnly(task.dueDate as any);
+  const isOverdue = isTaskOverdue(task.status, task.dueDate as any);
   const handleAddComment = async () => {
     const trimmed = commentText.trim();
     if (!trimmed) return;
@@ -257,12 +259,14 @@ export function TaskDetailDialog({ open, onOpenChange, task }: Props) {
                 </div>
                 <div className="flex items-center gap-2">
                   <CalendarClock className="w-3 h-3" />
-                  <span className={task.dueDate ? "text-destructive font-medium" : ""}>
-                    Due: {(() => {
-                      const parsed = parseDateOnly(task.dueDate as any);
-                      return parsed ? formatShortDate(parsed) : "Not set";
-                    })()}
+                  <span className={cn(isOverdue && "text-destructive font-medium")}>
+                    Due: {parsedDueDate ? formatShortDate(parsedDueDate) : "Not set"}
                   </span>
+                  {isOverdue && (
+                    <Badge variant="outline" className="text-red-700 border-red-200 bg-red-100">
+                      Overdue
+                    </Badge>
+                  )}
                 </div>
               </div>
             </div>

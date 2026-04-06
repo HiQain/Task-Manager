@@ -12,7 +12,7 @@ import {
 import { useUsers } from "@/hooks/use-users";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useAuth } from "@/hooks/use-auth";
-import { formatTaskDescription, formatShortDate, parseDateOnly } from "@/lib/utils";
+import { cn, formatTaskDescription, formatShortDate, isTaskOverdue, parseDateOnly } from "@/lib/utils";
 
 interface TaskCardProps {
   task: Task;
@@ -80,6 +80,7 @@ export function TaskCard({ task, index, canEdit, canMove, onEdit, onDelete, onVi
     participantIds.delete(user.id);
     return participantIds.size > 0;
   })();
+  const isOverdue = isTaskOverdue(task.status, task.dueDate as any);
 
   return (
     <Draggable draggableId={String(task.id)} index={index} isDragDisabled={!canMove}>
@@ -93,17 +94,25 @@ export function TaskCard({ task, index, canEdit, canMove, onEdit, onDelete, onVi
           onClick={() => onView && onView(task)}
         >
           <Card
-            className={`
-              border-border/60 shadow-sm hover:shadow-md transition-all duration-200
-              ${canMove ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"}
-              ${snapshot.isDragging ? "shadow-xl ring-2 ring-primary/20 rotate-2" : ""}
-            `}
+            className={cn(
+              "border-border/60 shadow-sm hover:shadow-md transition-all duration-200",
+              canMove ? "cursor-grab active:cursor-grabbing" : "cursor-pointer",
+              isOverdue && "border-red-200 bg-red-50/40",
+              snapshot.isDragging && "shadow-xl ring-2 ring-primary/20 rotate-2",
+            )}
           >
             <CardContent className="p-4">
               <div className="flex justify-between items-start mb-2">
-                <Badge variant="outline" className={`capitalize font-medium ${priorityColors[task.priority as keyof typeof priorityColors]}`}>
-                  {task.priority}
-                </Badge>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Badge variant="outline" className={`capitalize font-medium ${priorityColors[task.priority as keyof typeof priorityColors]}`}>
+                    {task.priority}
+                  </Badge>
+                  {isOverdue && (
+                    <Badge variant="outline" className="font-medium text-red-700 border-red-200 bg-red-100">
+                      Overdue
+                    </Badge>
+                  )}
+                </div>
 
                 <div className="flex items-center gap-1">
                   {canOpenChat && onMessage && (
@@ -225,7 +234,7 @@ export function TaskCard({ task, index, canEdit, canMove, onEdit, onDelete, onVi
                   </div>
                 )}
                 <div className="ml-auto flex items-center gap-2">
-                  <div className="flex items-center">
+                  <div className={cn("flex items-center", isOverdue && "text-red-700 font-medium")}>
                     <Clock className="w-3 h-3 mr-1" />
                     <span>{formatDueDate(task.dueDate as any)}</span>
                   </div>

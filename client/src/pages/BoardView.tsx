@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useLocation } from "wouter";
 import { useEnsureTaskGroup } from "@/hooks/use-chat";
-import { parseDateOnly } from "@/lib/utils";
+import { isTaskOverdue, parseDateOnly } from "@/lib/utils";
 
 const COLUMNS = [
   { id: "todo", title: "To Do", color: "bg-slate-500" },
@@ -224,7 +224,7 @@ export default function BoardView() {
       }
 
       if (dueFilter === "overdue") {
-        if (!hasDueDate || dueTime === null || dueTime >= startOfTodayTime) return false;
+        if (!isTaskOverdue(task.status, task.dueDate as any)) return false;
       } else if (dueFilter === "today") {
         if (!hasDueDate || dueTime === null || dueTime < startOfTodayTime || dueTime > endOfTodayTime) return false;
       } else if (dueFilter === "upcoming") {
