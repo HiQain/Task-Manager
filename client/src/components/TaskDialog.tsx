@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Loader2, User as UserIcon, CalendarDays } from "lucide-react";
+import { Loader2, User as UserIcon, CalendarDays, X } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useEnsureTaskGroup } from "@/hooks/use-chat";
 import { RichTextEditor } from "@/components/RichTextEditor";
@@ -112,6 +112,15 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
       next.push(item);
     }
     form.setValue("attachments" as any, next as any);
+  };
+
+  const removeAttachment = (indexToRemove: number) => {
+    const current = (form.getValues("attachments") as any[]) || [];
+    const next = current.filter((_, index) => index !== indexToRemove);
+    form.setValue("attachments" as any, next.length > 0 ? (next as any) : undefined, {
+      shouldDirty: true,
+      shouldTouch: true,
+    });
   };
 
   const parseAttachments = (raw: unknown): any[] => {
@@ -445,14 +454,26 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
                   <div className="space-y-3">
                     {attachments.map((a: any, idx: number) => (
                       <div key={idx} className="w-full flex flex-col gap-2">
-                        <div className="w-24 h-24 border rounded overflow-hidden flex items-center justify-center bg-white">
-                          {a.type.startsWith("image/") ? (
-                            <img src={a.data} alt={a.name} className="object-cover w-full h-full" />
-                          ) : (
-                            <a href={a.data} download={a.name} className="text-xs p-2 text-center">
-                              {a.name}
-                            </a>
-                          )}
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="w-24 h-24 border rounded overflow-hidden flex items-center justify-center bg-white shrink-0">
+                            {a.type.startsWith("image/") ? (
+                              <img src={a.data} alt={a.name} className="object-cover w-full h-full" />
+                            ) : (
+                              <a href={a.data} download={a.name} className="text-xs p-2 text-center">
+                                {a.name}
+                              </a>
+                            )}
+                          </div>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => removeAttachment(idx)}
+                            className="h-8 px-2 text-destructive hover:text-destructive"
+                          >
+                            <X className="h-4 w-4 mr-1" />
+                            Remove
+                          </Button>
                         </div>
 
                         <input

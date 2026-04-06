@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ClipboardEvent } from "react";
 import { Bold, Italic, Underline, List, ListOrdered, Link as LinkIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -55,6 +55,17 @@ export function RichTextEditor({
     setIsEmpty(!el.textContent?.trim());
   };
 
+  const handlePaste = (event: ClipboardEvent<HTMLDivElement>) => {
+    const items = Array.from(event.clipboardData?.items || []);
+    const hasImageOrFile = items.some(
+      (item) => item.kind === "file" || item.type.startsWith("image/"),
+    );
+
+    if (hasImageOrFile) {
+      event.preventDefault();
+    }
+  };
+
   return (
     <div className={cn("rounded-md border border-input bg-background", className)}>
       <div className="flex flex-wrap items-center gap-1 border-b border-border/70 p-2">
@@ -94,6 +105,7 @@ export function RichTextEditor({
           style={{ minHeight }}
           contentEditable
           onInput={handleInput}
+          onPaste={handlePaste}
           onFocus={() => setIsFocused(true)}
           onBlur={() => setIsFocused(false)}
           suppressContentEditableWarning

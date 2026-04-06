@@ -15,7 +15,11 @@ export default function Members() {
   const [search, setSearch] = useState("");
 
   const members = useMemo(() => {
-    const list = (users || []).filter((entry) => entry.id !== user?.id);
+    const list = [...(users || [])].sort((a, b) => {
+      if (a.id === user?.id) return -1;
+      if (b.id === user?.id) return 1;
+      return a.name.localeCompare(b.name);
+    });
     const q = search.trim().toLowerCase();
     if (!q) return list;
     return list.filter((entry) =>
@@ -64,6 +68,7 @@ export default function Members() {
           </Card>
         ) : (
           members.map((member) => {
+            const isCurrentUser = member.id === user?.id;
             const designation = member.role === "admin"
               ? "Admin"
               : ((member.designation || "").trim() || "No designation");
@@ -85,7 +90,10 @@ export default function Members() {
                       </Avatar>
                     </button>
                     <div className="min-w-0">
-                      <p className="font-medium text-foreground truncate">{member.name}</p>
+                      <p className="font-medium text-foreground truncate">
+                        {member.name}
+                        {isCurrentUser ? " (you)" : ""}
+                      </p>
                       <p className="text-xs text-muted-foreground truncate">{designation}</p>
                     </div>
                   </div>
@@ -94,8 +102,9 @@ export default function Members() {
                       size="icon"
                       variant="ghost"
                       className="h-8 w-8"
-                      onClick={() => setLocation(`/chat?userId=${member.id}`)}
-                      aria-label={`Chat with ${member.name}`}
+                      onClick={() => !isCurrentUser && setLocation(`/chat?userId=${member.id}`)}
+                      aria-label={isCurrentUser ? "Your account" : `Chat with ${member.name}`}
+                      disabled={isCurrentUser}
                     >
                       <MessageSquare className="w-4 h-4" />
                     </Button>
