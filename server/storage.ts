@@ -48,6 +48,43 @@ import {
 import { and, asc, desc, eq, inArray, isNull, lte, ne, or } from "drizzle-orm";
 import crypto from "crypto";
 
+const DATE_ONLY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+function parseDueDateOnly(raw: unknown): Date | null {
+  if (!raw) return null;
+
+  if (raw instanceof Date) {
+    if (Number.isNaN(raw.getTime())) return null;
+    return new Date(Date.UTC(raw.getUTCFullYear(), raw.getUTCMonth(), raw.getUTCDate(), 12, 0, 0));
+  }
+
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+
+    const match = DATE_ONLY_RE.exec(trimmed);
+    if (match) {
+      const year = Number(match[1]);
+      const month = Number(match[2]);
+      const day = Number(match[3]);
+      if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return null;
+      return new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+    }
+
+    const parsed = new Date(trimmed);
+    if (Number.isNaN(parsed.getTime())) return null;
+    return new Date(Date.UTC(parsed.getUTCFullYear(), parsed.getUTCMonth(), parsed.getUTCDate(), 12, 0, 0));
+  }
+
+  return null;
+}
+
+function serializeDueDateOnly(raw: unknown): string | null {
+  if (!raw) return null;
+  const parsed = parseDueDateOnly(raw);
+  return parsed ? parsed.toISOString().slice(0, 10) : null;
+}
+
 export interface IStorage {
   // Users
   getUsers(): Promise<User[]>;
@@ -347,14 +384,7 @@ export class DatabaseStorage implements IStorage {
       let attachments = [];
       try { attachments = JSON.parse(r.attachments || '[]'); } catch { attachments = []; }
       const assignedToIds = normalizeAssignedToIds(r.assignedToIds, r.assignedToId);
-      let dueDate: string | null = null;
-      if (r.dueDate instanceof Date) {
-        dueDate = r.dueDate.toISOString();
-      } else if (typeof r.dueDate === 'string' && r.dueDate.length) {
-        dueDate = r.dueDate;
-      } else {
-        dueDate = null;
-      }
+      const dueDate = serializeDueDateOnly(r.dueDate);
       return { ...r, attachments, assignedToIds, dueDate } as any;
     });
   }
@@ -365,10 +395,12 @@ export class DatabaseStorage implements IStorage {
     try {
       // attachments stored as JSON string in DB; parse for API consumers
       const assignedToIds = normalizeAssignedToIds((task as any).assignedToIds, (task as any).assignedToId);
-      return { ...task, attachments: JSON.parse(task.attachments || "[]"), assignedToIds } as any;
+      const dueDate = serializeDueDateOnly(task.dueDate);
+      return { ...task, attachments: JSON.parse(task.attachments || "[]"), assignedToIds, dueDate } as any;
     } catch (e) {
       const assignedToIds = normalizeAssignedToIds((task as any).assignedToIds, (task as any).assignedToId);
-      return { ...task, attachments: [], assignedToIds } as any;
+      const dueDate = serializeDueDateOnly(task.dueDate);
+      return { ...task, attachments: [], assignedToIds, dueDate } as any;
     }
   }
 
@@ -380,12 +412,7 @@ export class DatabaseStorage implements IStorage {
     );
     const assignedToId = assignedToIds.length > 0 ? assignedToIds[0] : ((insertTask as any).assignedToId || null);
     const rawDue = (insertTask as any).dueDate;
-    let dueDateVal: Date | null = null;
-    if (rawDue) {
-      const d = rawDue instanceof Date ? rawDue : new Date(rawDue);
-      if (!isNaN(d.getTime())) dueDateVal = d;
-      else dueDateVal = null;
-    }
+    const dueDateVal = parseDueDateOnly(rawDue);
     const [lastTask] = await db
       .select()
       .from(tasks)
@@ -412,11 +439,11 @@ export class DatabaseStorage implements IStorage {
     try {
       const attachments = JSON.parse(task.attachments || "[]");
       const parsedAssignedToIds = normalizeAssignedToIds((task as any).assignedToIds, (task as any).assignedToId);
-      const dueDate = task.dueDate instanceof Date ? task.dueDate.toISOString() : (typeof task.dueDate === 'string' ? task.dueDate : null);
+      const dueDate = serializeDueDateOnly(task.dueDate);
       return { ...task, attachments, assignedToIds: parsedAssignedToIds, dueDate } as any;
     } catch (e) {
       const parsedAssignedToIds = normalizeAssignedToIds((task as any).assignedToIds, (task as any).assignedToId);
-      const dueDate = task.dueDate instanceof Date ? task.dueDate.toISOString() : (typeof task.dueDate === 'string' ? task.dueDate : null);
+      const dueDate = serializeDueDateOnly(task.dueDate);
       return { ...task, attachments: [], assignedToIds: parsedAssignedToIds, dueDate } as any;
     }
   }
@@ -437,8 +464,7 @@ export class DatabaseStorage implements IStorage {
     if ((updates as any).dueDate !== undefined) {
       const rawDue = (updates as any).dueDate;
       if (rawDue) {
-        const d = rawDue instanceof Date ? rawDue : new Date(rawDue);
-        toUpdate.dueDate = !isNaN(d.getTime()) ? d : null;
+        toUpdate.dueDate = parseDueDateOnly(rawDue);
       } else {
         toUpdate.dueDate = null;
       }
@@ -454,11 +480,11 @@ export class DatabaseStorage implements IStorage {
     try {
       const attachments = JSON.parse(updated.attachments || "[]");
       const parsedAssignedToIds = normalizeAssignedToIds((updated as any).assignedToIds, (updated as any).assignedToId);
-      const dueDate = updated.dueDate instanceof Date ? updated.dueDate.toISOString() : (typeof updated.dueDate === 'string' ? updated.dueDate : null);
+      const dueDate = serializeDueDateOnly(updated.dueDate);
       return { ...updated, attachments, assignedToIds: parsedAssignedToIds, dueDate } as any;
     } catch (e) {
       const parsedAssignedToIds = normalizeAssignedToIds((updated as any).assignedToIds, (updated as any).assignedToId);
-      const dueDate = updated.dueDate instanceof Date ? updated.dueDate.toISOString() : (typeof updated.dueDate === 'string' ? updated.dueDate : null);
+      const dueDate = serializeDueDateOnly(updated.dueDate);
       return { ...updated, attachments: [], assignedToIds: parsedAssignedToIds, dueDate } as any;
     }
   }
