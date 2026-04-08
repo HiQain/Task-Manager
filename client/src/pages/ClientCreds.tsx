@@ -2,13 +2,14 @@ import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
 import { useUsers } from "@/hooks/use-users";
 import { api, buildUrl } from "@shared/routes";
 import { apiRequest } from "@/lib/queryClient";
-import { Eye, EyeOff, KeyRound, Loader2, Pencil, Plus, ShieldCheck, Trash2, UserRound, X } from "lucide-react";
+import { KeyRound, Loader2, MoreHorizontal, Pencil, Plus, Search, ShieldCheck, Trash2, X } from "lucide-react";
 
 type ProjectMember = {
   userId: number;
@@ -32,10 +33,7 @@ type ClientCredProject = {
 
 type AccessMap = Record<number, "view" | "edit" | null>;
 
-type CredentialMode = "email" | "phone" | "custom";
-
 type CredentialFormRow = {
-  mode: CredentialMode;
   via: string;
   value: string;
   password: string;
@@ -47,10 +45,17 @@ type ProjectFormState = {
   rows: CredentialFormRow[];
 };
 
+type ClientGroup = {
+  key: string;
+  clientName: string;
+  projects: ClientCredProject[];
+  credentialCount: number;
+};
+
 const emptyFormState = (): ProjectFormState => ({
   clientName: "",
   projectName: "",
-  rows: [{ mode: "email", via: "Email", value: "", password: "" }],
+  rows: [{ via: "", value: "", password: "" }],
 });
 
 function sanitizeValueList(values: string[]): string[] {
@@ -59,20 +64,20 @@ function sanitizeValueList(values: string[]): string[] {
 
 function formatDate(value: string | Date | null | undefined): string {
   if (!value) return "-";
-  return new Date(value).toLocaleString();
+  return new Date(value).toLocaleString(undefined, {
+    month: "numeric",
+    day: "numeric",
+    year: "2-digit",
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: true,
+  });
 }
 
-function inferCredentialMode(via: string): CredentialMode {
-  const normalized = via.trim().toLowerCase();
-  if (normalized === "email") return "email";
-  if (normalized === "phone") return "phone";
-  return "custom";
-}
-
-function createFormRow(mode: CredentialMode = "email"): CredentialFormRow {
+function createFormRow(): CredentialFormRow {
   return {
-    mode,
-    via: mode === "email" ? "Email" : mode === "phone" ? "Phone" : "",
+    via: "",
     value: "",
     password: "",
   };
@@ -81,15 +86,16 @@ function createFormRow(mode: CredentialMode = "email"): CredentialFormRow {
 function buildRowsFromProject(project: ClientCredProject): CredentialFormRow[] {
   const maxRows = Math.max(project.viaChannels.length, project.emails.length, project.passwords.length, 1);
   return Array.from({ length: maxRows }, (_, index) => {
-    const via = project.viaChannels[index] || "";
-    const mode = inferCredentialMode(via);
     return {
-      mode,
-      via: via || (mode === "email" ? "Email" : mode === "phone" ? "Phone" : ""),
+      via: project.viaChannels[index] || "",
       value: project.emails[index] || "",
       password: project.passwords[index] || "",
     };
   });
+}
+
+function getClientGroupKey(clientName: string): string {
+  return clientName.trim().toLowerCase();
 }
 
 export default function ClientCreds() {
@@ -98,23 +104,22 @@ export default function ClientCreds() {
   const { data: users } = useUsers();
 
   const [projects, setProjects] = useState<ClientCredProject[]>([]);
-  const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [hasClientCredsAccess, setHasClientCredsAccess] = useState(true);
-  const [showPasswords, setShowPasswords] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
 
   const [formOpen, setFormOpen] = useState(false);
   const [formMode, setFormMode] = useState<"create" | "edit">("create");
   const [formState, setFormState] = useState<ProjectFormState>(emptyFormState());
   const [editingProjectId, setEditingProjectId] = useState<number | null>(null);
   const [formError, setFormError] = useState("");
+  const [accessSearch, setAccessSearch] = useState("");
 
   const [accessDialogOpen, setAccessDialogOpen] = useState(false);
+  const [accessProjectId, setAccessProjectId] = useState<number | null>(null);
   const [manageAccessMap, setManageAccessMap] = useState<AccessMap>({});
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; label: string } | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
-
-  const selectedProject = projects.find((project) => project.id === selectedProjectId) || null;
 
   const allowedUsers = useMemo(() => {
     return (users || []).filter(
@@ -122,14 +127,85 @@ export default function ClientCreds() {
     );
   }, [users, user?.id]);
 
-  const loadProjects = async (preferredProjectId?: number | null) => {
+  const groupedClients = useMemo<ClientGroup[]>(() => {
+    const groups = new Map<string, ClientGroup>();
+
+    projects.forEach((project) => {
+      const key = getClientGroupKey(project.clientName);
+      const existing = groups.get(key);
+      const credentialCount = Math.max(project.viaChannels.length, project.emails.length, project.passwords.length, 1);
+
+      if (existing) {
+        existing.projects.push(project);
+        existing.credentialCount += credentialCount;
+      } else {
+        groups.set(key, {
+          key,
+          clientName: project.clientName,
+          projects: [project],
+          credentialCount,
+        });
+      }
+    });
+
+    return Array.from(groups.values())
+      .map((group) => ({
+        ...group,
+        projects: [...group.projects].sort((a, b) => a.projectName.localeCompare(b.projectName)),
+      }))
+      .sort((a, b) => a.clientName.localeCompare(b.clientName));
+  }, [projects]);
+
+  const filteredClientGroups = useMemo(() => {
+    const query = searchTerm.trim().toLowerCase();
+    if (!query) return groupedClients;
+
+    return groupedClients
+      .map((group) => {
+        const matchesClient = group.clientName.toLowerCase().includes(query);
+        const filteredProjects = group.projects.filter((project) => {
+          if (matchesClient) return true;
+
+          if (project.projectName.toLowerCase().includes(query)) return true;
+
+          return buildRowsFromProject(project).some((row) => (
+            row.via.toLowerCase().includes(query) ||
+            row.value.toLowerCase().includes(query) ||
+            row.password.toLowerCase().includes(query)
+          ));
+        });
+
+        if (filteredProjects.length === 0) return null;
+
+        return {
+          ...group,
+          projects: filteredProjects,
+          credentialCount: filteredProjects.reduce((total, project) => total + buildRowsFromProject(project).length, 0),
+        };
+      })
+      .filter((group): group is ClientGroup => group !== null);
+  }, [groupedClients, searchTerm]);
+
+  const accessProject = projects.find((project) => project.id === accessProjectId) || null;
+  const existingClientNames = groupedClients.map((group) => group.clientName);
+  const viaOptions = useMemo(() => {
+    const unique = new Set<string>(["Email", "Phone"]);
+    projects.forEach((project) => {
+      project.viaChannels.forEach((via) => {
+        const normalized = via.trim();
+        if (normalized) unique.add(normalized);
+      });
+    });
+    return Array.from(unique).sort((a, b) => a.localeCompare(b));
+  }, [projects]);
+
+  const loadProjects = async () => {
     try {
       setIsLoading(true);
       const res = await fetch(api.clientCreds.list.path, { credentials: "include" });
       if (!res.ok) {
         if (res.status === 401 || res.status === 403) {
           setProjects([]);
-          setSelectedProjectId(null);
           setHasClientCredsAccess(false);
           return;
         }
@@ -140,14 +216,6 @@ export default function ClientCreds() {
       const data = await res.json() as { projects: ClientCredProject[] };
       const nextProjects = Array.isArray(data.projects) ? data.projects : [];
       setProjects(nextProjects);
-
-      const candidateId = preferredProjectId ?? selectedProjectId;
-      const hasCandidate = candidateId !== null && nextProjects.some((project) => project.id === candidateId);
-      if (hasCandidate) {
-        setSelectedProjectId(candidateId);
-      } else {
-        setSelectedProjectId(nextProjects[0]?.id ?? null);
-      }
     } catch {
       toast({
         title: "Load failed",
@@ -177,19 +245,20 @@ export default function ClientCreds() {
     setEditingProjectId(null);
     setFormState(emptyFormState());
     setManageAccessMap({});
+    setAccessSearch("");
     setFormError("");
     setFormOpen(true);
   };
 
-  const openEditDialog = () => {
-    if (!selectedProject) return;
+  const openEditProjectDialog = (project: ClientCredProject) => {
     setFormMode("edit");
-    setEditingProjectId(selectedProject.id);
+    setEditingProjectId(project.id);
     setFormState({
-      clientName: selectedProject.clientName,
-      projectName: selectedProject.projectName,
-      rows: buildRowsFromProject(selectedProject),
+      clientName: project.clientName,
+      projectName: project.projectName,
+      rows: buildRowsFromProject(project),
     });
+    setAccessSearch("");
     setFormError("");
     setFormOpen(true);
   };
@@ -197,7 +266,7 @@ export default function ClientCreds() {
   const submitForm = async () => {
     const normalizedRows = formState.rows
       .map((row) => ({
-        via: row.mode === "email" ? "Email" : row.mode === "phone" ? "Phone" : row.via.trim(),
+        via: row.via.trim(),
         value: row.value.trim(),
         password: row.password.trim(),
       }))
@@ -220,7 +289,7 @@ export default function ClientCreds() {
       return;
     }
     if (normalizedRows.some((row) => !row.via || !row.value || !row.password)) {
-      setFormError("Selected via ke neeche value aur password dono required hain.");
+      setFormError("Each credential row requires a via type, a value, and a password.");
       return;
     }
 
@@ -233,7 +302,7 @@ export default function ClientCreds() {
         });
         const created = await res.json() as { id: number };
         setFormOpen(false);
-        await loadProjects(created?.id ?? null);
+        await loadProjects();
       } else if (editingProjectId) {
         await apiRequest(
           api.clientCreds.updateProject.method,
@@ -241,7 +310,7 @@ export default function ClientCreds() {
           payload,
         );
         setFormOpen(false);
-        await loadProjects(editingProjectId);
+        await loadProjects();
       }
     } catch (error) {
       toast({
@@ -252,26 +321,28 @@ export default function ClientCreds() {
     }
   };
 
-  const openAccessDialog = () => {
-    if (!selectedProject) return;
+  const openAccessDialog = (project: ClientCredProject) => {
     const initialMap: AccessMap = {};
-    selectedProject.members.forEach((member) => {
+    project.members.forEach((member) => {
       initialMap[member.userId] = member.access;
     });
+    setAccessProjectId(project.id);
     setManageAccessMap(initialMap);
+    setAccessSearch("");
     setAccessDialogOpen(true);
   };
 
   const saveAccess = async () => {
-    if (!selectedProject) return;
+    if (!accessProject) return;
     try {
       await apiRequest(
         api.clientCreds.updateAccess.method,
-        buildUrl(api.clientCreds.updateAccess.path, { id: selectedProject.id }),
+        buildUrl(api.clientCreds.updateAccess.path, { id: accessProject.id }),
         { members: buildMembersPayload(manageAccessMap) },
       );
       setAccessDialogOpen(false);
-      await loadProjects(selectedProject.id);
+      setAccessProjectId(null);
+      await loadProjects();
     } catch {
       toast({
         title: "Access update failed",
@@ -281,11 +352,11 @@ export default function ClientCreds() {
     }
   };
 
-  const openDeleteDialog = () => {
-    if (!selectedProject || !selectedProject.canDelete) return;
+  const openDeleteDialog = (project: ClientCredProject) => {
+    if (!project.canDelete) return;
     setDeleteTarget({
-      id: selectedProject.id,
-      label: `${selectedProject.clientName} / ${selectedProject.projectName}`,
+      id: project.id,
+      label: `${project.clientName} / ${project.projectName}`,
     });
   };
 
@@ -299,7 +370,7 @@ export default function ClientCreds() {
         buildUrl(api.clientCreds.deleteProject.path, { id: deleteTarget.id }),
       );
       setDeleteTarget(null);
-      await loadProjects(null);
+      await loadProjects();
     } catch {
       toast({
         title: "Delete failed",
@@ -314,218 +385,210 @@ export default function ClientCreds() {
   const renderAccessPicker = (
     mapState: AccessMap,
     setMapState: Dispatch<SetStateAction<AccessMap>>,
-  ) => (
-    <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
-      {allowedUsers.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No users with client creds access found. Enable it from Team page.</p>
-      ) : (
-        allowedUsers.map((member) => {
-          const selectedAccess = mapState[member.id] || null;
-          return (
-            <div key={member.id} className="flex items-center gap-2 rounded-md border p-2">
-              <label className="flex items-center gap-2 min-w-0 flex-1">
-                <input
-                  type="checkbox"
-                  checked={selectedAccess !== null}
-                  onChange={(e) => {
-                    const checked = e.target.checked;
-                    setMapState((prev) => ({
-                      ...prev,
-                      [member.id]: checked ? (prev[member.id] || "view") : null,
-                    }));
-                  }}
-                />
-                <span className="text-sm truncate">{member.name}</span>
-              </label>
-              <select
-                value={selectedAccess || "view"}
-                disabled={selectedAccess === null}
-                onChange={(e) => {
-                  const nextAccess = e.target.value === "edit" ? "edit" : "view";
-                  setMapState((prev) => ({ ...prev, [member.id]: nextAccess }));
-                }}
-                className="h-8 rounded-md border border-input bg-background px-2 text-sm"
-              >
-                <option value="view">View</option>
-                <option value="edit">Edit</option>
-              </select>
-            </div>
-          );
-        })
-      )}
-    </div>
-  );
+  ) => {
+    const query = accessSearch.trim().toLowerCase();
+    const filteredUsers = allowedUsers.filter((member) => {
+      if (!query) return !!mapState[member.id];
+      return `${member.name} ${member.email}`.toLowerCase().includes(query);
+    });
+
+    return (
+      <div className="space-y-3">
+        <Input
+          value={accessSearch}
+          onChange={(e) => setAccessSearch(e.target.value)}
+          placeholder="Search team member..."
+          className="h-9"
+        />
+        <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
+          {allowedUsers.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No users with client creds access found. Enable it from Team page.</p>
+          ) : filteredUsers.length === 0 ? (
+            <p className="text-xs text-muted-foreground">
+              {query ? "No user found." : "No selected users yet. Search to add users."}
+            </p>
+          ) : (
+            filteredUsers.map((member) => {
+              const selectedAccess = mapState[member.id] || null;
+              return (
+                <div key={member.id} className="flex items-center gap-2 rounded-md border p-2">
+                  <label className="flex min-w-0 flex-1 items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={selectedAccess !== null}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setMapState((prev) => ({
+                          ...prev,
+                          [member.id]: checked ? (prev[member.id] || "view") : null,
+                        }));
+                      }}
+                    />
+                    <span className="truncate text-sm">{member.name}</span>
+                  </label>
+                  <select
+                    value={selectedAccess || "view"}
+                    disabled={selectedAccess === null}
+                    onChange={(e) => {
+                      const nextAccess = e.target.value === "edit" ? "edit" : "view";
+                      setMapState((prev) => ({ ...prev, [member.id]: nextAccess }));
+                    }}
+                    className="h-8 rounded-md border border-input bg-background px-2 text-sm"
+                  >
+                    <option value="view">View</option>
+                    <option value="edit">Edit</option>
+                  </select>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const closeForm = () => {
+    setFormOpen(false);
+    setAccessSearch("");
+    setFormError("");
+  };
 
   return (
     <>
-      <div className="grid gap-4 lg:grid-cols-[320px_1fr]">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Client Projects</CardTitle>
-            <p className="text-xs text-muted-foreground">Manage shared client login and communication creds.</p>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <Button type="button" className="w-full" onClick={openCreateDialog}>
-              <Plus className="h-4 w-4" />
-              New Client Creds
-            </Button>
-
-            <div className="space-y-2">
-              {projects.map((project) => {
-                const isActive = project.id === selectedProjectId;
-                return (
-                  <button
-                    key={project.id}
-                    type="button"
-                    onClick={() => setSelectedProjectId(project.id)}
-                    className={`w-full rounded-lg border px-3 py-3 text-left transition-colors ${isActive ? "border-primary/40 bg-primary/10" : "hover:bg-muted"}`}
-                  >
-                    <p className="text-sm font-semibold truncate">{project.clientName}</p>
-                    <p className="text-xs text-muted-foreground truncate mt-1">{project.projectName}</p>
-                    <p className="text-xs text-muted-foreground mt-2">{project.members.length} shared users</p>
-                  </button>
-                );
-              })}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
+      <div className="grid gap-4">
+        <Card className="lg:h-[calc(100vh-10rem)] lg:overflow-hidden">
           <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <CardTitle className="flex items-center gap-2 text-base">
                 <KeyRound className="h-4 w-4" />
-                {selectedProject ? `${selectedProject.clientName} / ${selectedProject.projectName}` : "Client Creds"}
+                Client Creds
               </CardTitle>
-              {selectedProject && (
-                <p className="text-xs text-muted-foreground mt-1">
-                  Updated {formatDate(selectedProject.updatedAt)}
-                </p>
-              )}
+              <p className="mt-1 text-xs text-muted-foreground">Browse all clients and review their associated projects in one place.</p>
             </div>
             <div className="flex flex-wrap gap-2">
-              {selectedProject?.canDelete && (
-                <Button type="button" variant="secondary" onClick={openAccessDialog}>
-                  <ShieldCheck className="h-4 w-4" />
-                  Manage Access
-                </Button>
-              )}
-              {selectedProject?.canEdit && (
-                <Button type="button" variant="outline" onClick={openEditDialog}>
-                  <Pencil className="h-4 w-4" />
-                  Edit
-                </Button>
-              )}
-              {selectedProject && (
-                <Button type="button" variant="outline" onClick={() => setShowPasswords((prev) => !prev)}>
-                  {showPasswords ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  {showPasswords ? "Hide Passwords" : "Show Passwords"}
-                </Button>
-              )}
-              {selectedProject?.canDelete && (
-                <Button type="button" variant="destructive" onClick={openDeleteDialog}>
-                  <Trash2 className="h-4 w-4" />
-                  Delete
-                </Button>
-              )}
+              <div className="relative min-w-[300px] flex-1 sm:max-w-md">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  placeholder="Search client, project, email, via..."
+                  className="pl-9"
+                />
+              </div>
+              <Button type="button" onClick={openCreateDialog}>
+                <Plus className="h-4 w-4" />
+                New Client Creds
+              </Button>
             </div>
           </CardHeader>
 
-          <CardContent>
+          <CardContent className="h-full min-h-0 overflow-hidden">
             {isLoading ? (
               <p className="text-sm text-muted-foreground">Loading client creds...</p>
             ) : !hasClientCredsAccess ? (
-              <p className="text-sm text-muted-foreground">Client creds tab is disabled for your account.</p>
-            ) : !selectedProject ? (
-              <p className="text-sm text-muted-foreground">Create or select a client creds project to start.</p>
+              <p className="text-sm text-muted-foreground">The Client Creds section is not enabled for your account.</p>
+            ) : groupedClients.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Create a record to get started.</p>
+            ) : filteredClientGroups.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No matching client creds found for your search.</p>
             ) : (
-              <div className="space-y-4">
-                {!selectedProject.canEdit && (
-                  <p className="text-xs text-muted-foreground">View-only access: editing is disabled for this record.</p>
-                )}
+              <div className="flex h-full min-h-0 flex-col space-y-4">
+                <div className="min-h-0 max-h-[calc(100vh-18rem)] flex-1 overflow-auto border bg-background">
+                  <table className="min-w-[980px] w-full border-separate border-spacing-0 text-sm">
+                    <thead className="sticky top-0 z-10 bg-muted/30 backdrop-blur">
+                      <tr>
+                        <th className="border-b border-r border-border bg-muted/40 px-4 py-3 text-left font-semibold">Client</th>
+                        <th className="border-b border-r border-border bg-muted/40 px-4 py-3 text-left font-semibold">Project</th>
+                        <th className="border-b border-r border-border bg-muted/40 px-4 py-3 text-left font-semibold">Via</th>
+                        <th className="border-b border-r border-border bg-muted/40 px-4 py-3 text-left font-semibold">Email / Value</th>
+                        <th className="border-b border-r border-border bg-muted/40 px-4 py-3 text-left font-semibold">Password</th>
+                        <th className="w-[140px] border-b border-r border-border bg-muted/40 px-2 py-3 text-left font-semibold">Updated At</th>
+                        <th className="w-[72px] border-b border-border bg-muted/40 px-2 py-3 text-center font-semibold">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredClientGroups.map((group) => {
+                        const groupRowCount = group.projects.reduce((total, project) => total + buildRowsFromProject(project).length, 0);
 
-                <div className="grid gap-4 md:grid-cols-2">
-                  <Card className="border-border/60">
-                    <CardHeader className="pb-3">
-                      <CardTitle className="text-sm">Client Details</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-3 text-sm">
-                      <div>
-                        <p className="text-xs uppercase tracking-wide text-muted-foreground">Client Name</p>
-                        <p className="mt-1 font-medium">{selectedProject.clientName}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs uppercase tracking-wide text-muted-foreground">Project Name</p>
-                        <p className="mt-1 font-medium">{selectedProject.projectName}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs uppercase tracking-wide text-muted-foreground">Created</p>
-                        <p className="mt-1">{formatDate(selectedProject.createdAt)}</p>
-                      </div>
-                    </CardContent>
-                  </Card>
+                        return group.projects.map((project, projectIndex) => {
+                          const rows = buildRowsFromProject(project);
+                          const projectRowCount = rows.length;
 
-                  <Card className="border-border/60">
-                    <CardHeader className="pb-3">
-                      <CardTitle className="text-sm">Shared With</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-2">
-                      {selectedProject.members.length === 0 ? (
-                        <p className="text-sm text-muted-foreground">Only admin/owner currently has access.</p>
-                      ) : (
-                        selectedProject.members.map((member) => (
-                          <div key={member.userId} className="flex items-center justify-between rounded-md border px-3 py-2 text-sm">
-                            <div className="flex items-center gap-2 min-w-0">
-                              <UserRound className="h-4 w-4 text-muted-foreground" />
-                              <span className="truncate">{member.name}</span>
-                            </div>
-                            <span className="rounded-full bg-muted px-2 py-0.5 text-xs capitalize">{member.access}</span>
-                          </div>
-                        ))
-                      )}
-                    </CardContent>
-                  </Card>
-                </div>
+                          return rows.map((row, rowIndex) => (
+                            <tr key={`${group.key}-${project.id}-${rowIndex}`} className="align-top odd:bg-[#f8fafc] even:bg-[#eef2f7]">
+                              {projectIndex === 0 && rowIndex === 0 && (
+                                <td rowSpan={groupRowCount} className="border-b border-r border-border px-4 py-4 font-semibold whitespace-nowrap align-top">
+                                  {group.clientName}
+                                </td>
+                              )}
 
-                <div className="grid gap-4 lg:grid-cols-3">
-                  <Card className="border-border/60">
-                    <CardHeader className="pb-3">
-                      <CardTitle className="text-sm">Via</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-2">
-                      {selectedProject.viaChannels.map((value, index) => (
-                        <div key={`${value}-${index}`} className="rounded-md border px-3 py-2 text-sm">
-                          {value}
-                        </div>
-                      ))}
-                    </CardContent>
-                  </Card>
+                              {rowIndex === 0 && (
+                                <td rowSpan={projectRowCount} className="border-b border-r border-border px-4 py-4 align-top">
+                                  <div className="space-y-2">
+                                    <p className="font-medium">{project.projectName}</p>
+                                    {!project.canEdit && (
+                                      <span className="inline-flex rounded-full border px-2 py-0.5 text-[11px] text-muted-foreground">
+                                        Read only
+                                      </span>
+                                    )}
+                                  </div>
+                                </td>
+                              )}
 
-                  <Card className="border-border/60">
-                    <CardHeader className="pb-3">
-                      <CardTitle className="text-sm">Emails</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-2">
-                      {selectedProject.emails.map((value, index) => (
-                        <div key={`${value}-${index}`} className="rounded-md border px-3 py-2 text-sm break-all">
-                          {value}
-                        </div>
-                      ))}
-                    </CardContent>
-                  </Card>
+                              <td className="border-b border-r border-border px-4 py-4 whitespace-nowrap">{row.via || "-"}</td>
+                              <td className="border-b border-r border-border px-4 py-4 break-all">{row.value || "-"}</td>
+                              <td className="border-b border-r border-border px-4 py-4 break-all">
+                                {row.password || "-"}
+                              </td>
 
-                  <Card className="border-border/60">
-                    <CardHeader className="pb-3">
-                      <CardTitle className="text-sm">Passwords</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-2">
-                      {selectedProject.passwords.map((value, index) => (
-                        <div key={`${value}-${index}`} className="rounded-md border px-3 py-2 text-sm break-all">
-                          {showPasswords ? value : "•".repeat(Math.max(8, value.length))}
-                        </div>
-                      ))}
-                    </CardContent>
-                  </Card>
+                              {rowIndex === 0 && (
+                                <td rowSpan={projectRowCount} className="border-b border-r border-border px-2 py-3 align-top">
+                                  <span className="whitespace-nowrap text-[11px] text-muted-foreground">{formatDate(project.updatedAt)}</span>
+                                </td>
+                              )}
+
+                              {rowIndex === 0 && (
+                                <td rowSpan={projectRowCount} className="border-b border-border px-2 py-3 align-top">
+                                  <div className="flex justify-center">
+                                    <DropdownMenu>
+                                      <DropdownMenuTrigger asChild>
+                                        <Button type="button" variant="ghost" size="icon" className="h-8 w-8 border">
+                                          <MoreHorizontal className="h-4 w-4" />
+                                        </Button>
+                                      </DropdownMenuTrigger>
+                                      <DropdownMenuContent align="end" className="w-40">
+                                        {project.canDelete && (
+                                          <DropdownMenuItem onClick={() => openAccessDialog(project)}>
+                                            <ShieldCheck className="mr-2 h-4 w-4" />
+                                            Access
+                                          </DropdownMenuItem>
+                                        )}
+                                        {project.canEdit && (
+                                          <DropdownMenuItem onClick={() => openEditProjectDialog(project)}>
+                                            <Pencil className="mr-2 h-4 w-4" />
+                                            Edit
+                                          </DropdownMenuItem>
+                                        )}
+                                        {project.canDelete && (
+                                          <DropdownMenuItem
+                                            onClick={() => openDeleteDialog(project)}
+                                            className="text-destructive focus:text-destructive"
+                                          >
+                                            <Trash2 className="mr-2 h-4 w-4" />
+                                            Delete
+                                          </DropdownMenuItem>
+                                        )}
+                                      </DropdownMenuContent>
+                                    </DropdownMenu>
+                                  </div>
+                                </td>
+                              )}
+                            </tr>
+                          ));
+                        });
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             )}
@@ -534,148 +597,97 @@ export default function ClientCreds() {
       </div>
 
       {formOpen && (
-        <div className="fixed inset-0 z-[210] bg-black/60 p-3 sm:p-4 flex items-start sm:items-center justify-center overflow-y-auto" onClick={() => setFormOpen(false)}>
+        <div className="fixed inset-0 z-[210] flex items-center justify-center bg-black/60 p-3 sm:p-4" onClick={closeForm}>
           <div
-            className="w-full sm:w-[95vw] max-w-3xl max-h-[95vh] overflow-y-auto rounded-lg border bg-background p-4 sm:p-6 mt-6 sm:mt-0"
+            className="flex h-[min(88vh,760px)] w-full max-w-5xl flex-col overflow-hidden rounded-lg border bg-background shadow-2xl sm:w-[95vw]"
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 className="text-lg font-semibold mb-3">{formMode === "create" ? "Create Client Creds" : "Edit Client Creds"}</h3>
-            <div className="space-y-4">
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Client Name</label>
-                  <Input
-                    value={formState.clientName}
-                    onChange={(e) => {
-                      setFormState((prev) => ({ ...prev, clientName: e.target.value }));
-                      if (formError) setFormError("");
-                    }}
-                    placeholder="Enter client name"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Project Name</label>
-                  <Input
-                    value={formState.projectName}
-                    onChange={(e) => {
-                      setFormState((prev) => ({ ...prev, projectName: e.target.value }));
-                      if (formError) setFormError("");
-                    }}
-                    placeholder="Enter project name"
-                  />
-                </div>
-              </div>
+            <div className="border-b px-4 py-4 sm:px-6">
+              <h3 className="text-lg font-semibold">{formMode === "create" ? "Create Client Credentials" : "Edit Client Credentials"}</h3>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {formMode === "create"
+                  ? "Add a new project record or attach a new project to an existing client."
+                  : "Update the selected project record and credential entries."}
+              </p>
+            </div>
 
-              <div className="space-y-3">
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-sm font-medium">Via</p>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() =>
-                      setFormState((prev) => ({
-                        ...prev,
-                        rows: [...prev.rows, createFormRow()],
-                      }))
-                    }
-                  >
-                    <Plus className="h-4 w-4" />
-                    Add more
-                  </Button>
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
+              <div className="space-y-5">
+                <div className="grid gap-4 lg:grid-cols-2 lg:items-start">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Client Name</label>
+                    <Input
+                      list="client-creds-client-options"
+                      value={formState.clientName}
+                      onChange={(e) => {
+                        setFormState((prev) => ({ ...prev, clientName: e.target.value }));
+                        if (formError) setFormError("");
+                      }}
+                      placeholder="Type or select client name"
+                    />
+                    <datalist id="client-creds-client-options">
+                      {existingClientNames.map((clientName) => (
+                        <option key={clientName} value={clientName} />
+                      ))}
+                    </datalist>
+                    <p className="text-xs text-muted-foreground">Pick an existing client from the dropdown or type a new one.</p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Project Name</label>
+                    <Input
+                      value={formState.projectName}
+                      onChange={(e) => {
+                        setFormState((prev) => ({ ...prev, projectName: e.target.value }));
+                        if (formError) setFormError("");
+                      }}
+                      placeholder="Enter project name"
+                    />
+                    {formMode === "create" && (
+                      <p className="text-xs text-muted-foreground">A client can have multiple projects. This field creates the new project entry.</p>
+                    )}
+                  </div>
                 </div>
 
                 <div className="space-y-3">
-                  {formState.rows.map((row, index) => (
-                    <div key={`via-row-${index}`} className="rounded-lg border p-3 space-y-3">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="text-sm font-medium">Entry {index + 1}</p>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          disabled={formState.rows.length === 1}
-                          onClick={() =>
-                            setFormState((prev) => ({
-                              ...prev,
-                              rows: prev.rows.length === 1
-                                ? prev.rows
-                                : prev.rows.filter((_, rowIndex) => rowIndex !== index),
-                            }))
-                          }
-                        >
-                          <X className="h-4 w-4" />
-                        </Button>
-                      </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-medium">Credential Entries</p>
+                      <p className="text-xs text-muted-foreground">Add each login method as a separate row, similar to a spreadsheet entry.</p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() =>
+                        setFormState((prev) => ({
+                          ...prev,
+                          rows: [...prev.rows, createFormRow()],
+                        }))
+                      }
+                    >
+                      <Plus className="h-4 w-4" />
+                      Add more
+                    </Button>
+                  </div>
 
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Select Via Type</label>
-                        <select
-                          value={row.mode}
-                          onChange={(e) => {
-                            const nextMode = e.target.value as CredentialMode;
-                            setFormState((prev) => ({
-                              ...prev,
-                              rows: prev.rows.map((entry, entryIndex) =>
-                                entryIndex !== index
-                                  ? entry
-                                  : {
-                                      ...entry,
-                                      mode: nextMode,
-                                      via: nextMode === "email" ? "Email" : nextMode === "phone" ? "Phone" : "",
-                                      value: "",
-                                    },
-                              ),
-                            }));
-                          }}
-                          className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                        >
-                          <option value="email">Email</option>
-                          <option value="phone">Phone</option>
-                          <option value="custom">Custom Via</option>
-                        </select>
-                      </div>
+                  <div className="overflow-hidden rounded-lg border">
+                    <div className="grid grid-cols-[minmax(180px,1.2fr)_minmax(180px,1.5fr)_minmax(180px,1.2fr)_56px] gap-0 border-b bg-muted/40 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      <div className="px-3 py-3">Via Type</div>
+                      <div className="border-l px-3 py-3">Email / Value</div>
+                      <div className="border-l px-3 py-3">Password</div>
+                      <div className="border-l px-3 py-3 text-center"> </div>
+                    </div>
 
-                      <div className="rounded-md border bg-muted/20 p-3 space-y-3">
-                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                          <div>
-                            <p className="text-sm font-medium">
-                              {row.mode === "email" ? "Email selected" : row.mode === "phone" ? "Phone selected" : "Custom via selected"}
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                              {row.mode === "email"
-                                ? "Neeche email add karein."
-                                : row.mode === "phone"
-                                  ? "Neeche phone number add karein."
-                                  : "Neeche custom via aur uski value add karein."}
-                            </p>
-                          </div>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() =>
-                              setFormState((prev) => ({
-                                ...prev,
-                                rows: [
-                                  ...prev.rows.slice(0, index + 1),
-                                  createFormRow(row.mode),
-                                  ...prev.rows.slice(index + 1),
-                                ],
-                              }))
-                            }
-                          >
-                            <Plus className="h-4 w-4" />
-                            {row.mode === "email" ? "Add more email" : row.mode === "phone" ? "Add more phone" : "Add more custom via"}
-                          </Button>
-                        </div>
-
-                        {row.mode === "custom" && (
-                          <div className="space-y-2">
-                            <label className="text-sm font-medium">Custom Via</label>
+                    <div className="max-h-[360px] overflow-y-auto">
+                      {formState.rows.map((row, index) => (
+                        <div key={`via-row-${index}`} className="grid grid-cols-1 border-b last:border-b-0 md:grid-cols-[minmax(180px,1.2fr)_minmax(180px,1.5fr)_minmax(180px,1.2fr)_56px]">
+                          <div className="border-b px-3 py-3 md:border-b-0 md:border-r">
+                            <label className="mb-1 block text-xs font-medium text-muted-foreground md:hidden">Via Type</label>
                             <Input
+                              list={`client-creds-via-options-${index}`}
                               value={row.via}
-                              placeholder="Twilio / WhatsApp / Portal"
+                              placeholder="Email, Gmail, Nextdoor"
                               onChange={(e) =>
                                 setFormState((prev) => ({
                                   ...prev,
@@ -685,24 +697,19 @@ export default function ClientCreds() {
                                 }))
                               }
                             />
+                            <datalist id={`client-creds-via-options-${index}`}>
+                              {viaOptions.map((via) => (
+                                <option key={via} value={via} />
+                              ))}
+                            </datalist>
                           </div>
-                        )}
 
-                        <div className="grid gap-3 md:grid-cols-2">
-                          <div className="space-y-2">
-                            <label className="text-sm font-medium">
-                              {row.mode === "email" ? "Email" : row.mode === "phone" ? "Phone Number" : "Value"}
-                            </label>
+                          <div className="border-b px-3 py-3 md:border-b-0 md:border-r">
+                            <label className="mb-1 block text-xs font-medium text-muted-foreground md:hidden">Email / Value</label>
                             <Input
-                              type={row.mode === "email" ? "email" : "text"}
+                              type="text"
                               value={row.value}
-                              placeholder={
-                                row.mode === "email"
-                                  ? "client@example.com"
-                                  : row.mode === "phone"
-                                    ? "+1 234 567 890"
-                                    : "Enter custom value"
-                              }
+                              placeholder="client@example.com or phone/value"
                               onChange={(e) =>
                                 setFormState((prev) => ({
                                   ...prev,
@@ -714,8 +721,8 @@ export default function ClientCreds() {
                             />
                           </div>
 
-                          <div className="space-y-2">
-                            <label className="text-sm font-medium">Password</label>
+                          <div className="border-b px-3 py-3 md:border-b-0 md:border-r">
+                            <label className="mb-1 block text-xs font-medium text-muted-foreground md:hidden">Password</label>
                             <Input
                               type="text"
                               value={row.password}
@@ -730,26 +737,47 @@ export default function ClientCreds() {
                               }
                             />
                           </div>
+
+                          <div className="flex items-center justify-center px-2 py-3">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              disabled={formState.rows.length === 1}
+                              onClick={() =>
+                                setFormState((prev) => ({
+                                  ...prev,
+                                  rows: prev.rows.length === 1
+                                    ? prev.rows
+                                    : prev.rows.filter((_, rowIndex) => rowIndex !== index),
+                                }))
+                              }
+                            >
+                              <X className="h-4 w-4" />
+                            </Button>
+                          </div>
                         </div>
-                      </div>
+                      ))}
                     </div>
-                  ))}
+                  </div>
                 </div>
+
+                {formMode === "create" && (
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium">Team Access</p>
+                    {renderAccessPicker(manageAccessMap, setManageAccessMap)}
+                  </div>
+                )}
+
+                {formError && <p className="text-xs text-destructive">{formError}</p>}
               </div>
+            </div>
 
-              {formMode === "create" && (
-                <div className="space-y-2">
-                  <p className="text-sm font-medium">Allow Users (Read/Edit)</p>
-                  {renderAccessPicker(manageAccessMap, setManageAccessMap)}
-                </div>
-              )}
-
-              {formError && <p className="text-xs text-destructive">{formError}</p>}
-
-              <div className="flex flex-col-reverse sm:flex-row justify-end gap-2 pt-2">
-                <Button variant="outline" className="w-full sm:w-auto" onClick={() => setFormOpen(false)}>Cancel</Button>
+            <div className="border-t px-4 py-4 sm:px-6">
+              <div className="flex flex-col-reverse justify-end gap-2 sm:flex-row">
+                <Button variant="outline" className="w-full sm:w-auto" onClick={closeForm}>Cancel</Button>
                 <Button className="w-full sm:w-auto" onClick={() => void submitForm()}>
-                  {formMode === "create" ? "Create" : "Save Changes"}
+                  {formMode === "create" ? "Create Record" : "Save Changes"}
                 </Button>
               </div>
             </div>
@@ -757,17 +785,32 @@ export default function ClientCreds() {
         </div>
       )}
 
-      {accessDialogOpen && selectedProject && (
-        <div className="fixed inset-0 z-[210] bg-black/60 p-3 sm:p-4 flex items-start sm:items-center justify-center overflow-y-auto" onClick={() => setAccessDialogOpen(false)}>
+      {accessDialogOpen && accessProject && (
+        <div
+          className="fixed inset-0 z-[210] flex items-start justify-center overflow-y-auto bg-black/60 p-3 sm:items-center sm:p-4"
+          onClick={() => {
+            setAccessDialogOpen(false);
+            setAccessProjectId(null);
+          }}
+        >
           <div
-            className="w-full sm:w-[95vw] max-w-2xl max-h-[95vh] overflow-y-auto rounded-lg border bg-background p-4 sm:p-6 mt-6 sm:mt-0"
+            className="mt-6 max-h-[95vh] w-full max-w-2xl overflow-y-auto rounded-lg border bg-background p-4 sm:mt-0 sm:w-[95vw] sm:p-6"
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 className="text-lg font-semibold mb-1">Manage Client Creds Access</h3>
-            <p className="text-sm text-muted-foreground mb-3">{selectedProject.clientName} / {selectedProject.projectName}</p>
+            <h3 className="mb-1 text-lg font-semibold">Manage Client Creds Access</h3>
+            <p className="mb-3 text-sm text-muted-foreground">{accessProject.clientName} / {accessProject.projectName}</p>
             {renderAccessPicker(manageAccessMap, setManageAccessMap)}
-            <div className="flex flex-col-reverse sm:flex-row justify-end gap-2 pt-3">
-              <Button variant="outline" className="w-full sm:w-auto" onClick={() => setAccessDialogOpen(false)}>Cancel</Button>
+            <div className="flex flex-col-reverse justify-end gap-2 pt-3 sm:flex-row">
+              <Button
+                variant="outline"
+                className="w-full sm:w-auto"
+                onClick={() => {
+                  setAccessDialogOpen(false);
+                  setAccessProjectId(null);
+                }}
+              >
+                Cancel
+              </Button>
               <Button className="w-full sm:w-auto" onClick={() => void saveAccess()}>Save Access</Button>
             </div>
           </div>
@@ -775,7 +818,7 @@ export default function ClientCreds() {
       )}
 
       <Dialog open={deleteTarget !== null} onOpenChange={(open) => (!open ? setDeleteTarget(null) : undefined)}>
-        <DialogContent className="w-[calc(100vw-2rem)] sm:w-full sm:max-w-[420px] fixed !top-1/2 !left-1/2 !-translate-x-1/2 !-translate-y-1/2">
+        <DialogContent className="fixed !left-1/2 !top-1/2 w-[calc(100vw-2rem)] !-translate-x-1/2 !-translate-y-1/2 sm:w-full sm:max-w-[420px]">
           <DialogHeader>
             <DialogTitle>Delete Client Creds</DialogTitle>
             <DialogDescription>
@@ -787,7 +830,7 @@ export default function ClientCreds() {
               Cancel
             </Button>
             <Button variant="destructive" type="button" onClick={() => void confirmDelete()} disabled={isDeleting}>
-              {isDeleting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Delete"}
+              {isDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Delete"}
             </Button>
           </div>
         </DialogContent>
