@@ -17,6 +17,25 @@ interface Props {
   task?: Task | null;
 }
 
+function getAttachmentMeta(attachment: any, index: number) {
+  if (typeof attachment === "string") {
+    const rawName = attachment.split("/").pop() || `Attachment ${index + 1}`;
+    const name = rawName.split("?")[0];
+    const extension = name.includes(".") ? name.split(".").pop()?.toUpperCase() || "FILE" : "FILE";
+    return { isImage: attachment.startsWith("data:image"), name, extension, href: attachment };
+  }
+
+  const name = attachment?.name || `Attachment ${index + 1}`;
+  const extension = name.includes(".") ? name.split(".").pop()?.toUpperCase() || "FILE" : "FILE";
+  return {
+    isImage: attachment?.type?.startsWith("image/"),
+    name,
+    extension,
+    href: attachment?.data,
+    reason: typeof attachment?.reason === "string" ? attachment.reason.trim() : "",
+  };
+}
+
 export function TaskDetailDialog({ open, onOpenChange, task }: Props) {
   const { data: users } = useUsers();
   const { user } = useAuth();
@@ -171,12 +190,13 @@ export function TaskDetailDialog({ open, onOpenChange, task }: Props) {
         <div className="p-5 sm:p-6 h-[calc(92vh-80px)] overflow-hidden">
           <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-5 min-h-0 h-full">
             <div className="space-y-4 overflow-y-auto pr-1 lg:pr-3 h-full">
-              <div>
-                <p className="text-xs text-muted-foreground mb-1">Description</p>
-                <p className="text-sm whitespace-pre-line break-words">
-                  {formatTaskDescription(task.description) || "No description provided."}
-                </p>
-              </div>
+              {formatTaskDescription(task.description) && (
+                <div>
+                  <p className="text-sm whitespace-pre-line break-words">
+                    {formatTaskDescription(task.description)}
+                  </p>
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="rounded-lg border p-3 bg-muted/10">
@@ -222,32 +242,35 @@ export function TaskDetailDialog({ open, onOpenChange, task }: Props) {
                 <div>
                   <p className="text-xs text-muted-foreground mb-2">Attachments</p>
                   <div className="grid grid-cols-2 gap-3">
-                    {attachments.map((a: any, i: number) => (
+                    {attachments.map((a: any, i: number) => {
+                      const meta = getAttachmentMeta(a, i);
+                      return (
                       <div key={i} className="border rounded-lg p-3 bg-background">
-                        {typeof a === "string" ? (
-                          a.startsWith("data:image") ? (
+                        {meta.isImage ? (
+                          typeof a === "string" ? (
                             // eslint-disable-next-line @next/next/no-img-element
                             <img src={a} alt={`att-${i}`} className="object-cover w-full h-24 rounded border" />
                           ) : (
-                            <a href={a} className="text-sm underline underline-offset-2">
-                              Open
-                            </a>
-                          )
-                        ) : a.type?.startsWith("image/") ? (
-                          <div className="flex flex-col gap-2">
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img src={a.data} alt={a.name} className="object-cover w-full h-24 rounded border" />
-                          </div>
+                          )
                         ) : (
-                          <a href={a.data} download={a.name} className="text-sm underline underline-offset-2">
-                            {a.name}
-                          </a>
+                          <div className="flex items-center gap-3 rounded-md border bg-[#f8fafc] px-3 py-2">
+                            <div className="flex h-10 w-10 items-center justify-center rounded-md border bg-white text-xs font-semibold text-slate-600">
+                              {meta.extension}
+                            </div>
+                            <a href={meta.href} download={typeof a === "string" ? undefined : meta.name} className="text-sm underline underline-offset-2 break-all">
+                              {meta.name}
+                            </a>
+                          </div>
                         )}
-                        <div className="mt-2 text-xs text-muted-foreground">
-                          Description: {a?.reason?.trim() ? a.reason : "No description provided"}
-                        </div>
+                        {meta.reason && (
+                          <div className="mt-2 text-xs text-muted-foreground">
+                            {meta.reason}
+                          </div>
+                        )}
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               )}

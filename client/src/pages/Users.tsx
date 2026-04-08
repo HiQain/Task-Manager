@@ -499,7 +499,7 @@ export default function Users() {
                   const storageAllowed = member.role === "admin" ? true : !!member.allowStorage;
                   const clientCredsAllowed = member.role === "admin" ? true : !!member.allowClientCreds;
                   return (
-                  <TableRow key={member.id} className="group hover:bg-muted/20">
+                  <TableRow key={member.id} className="group odd:bg-[#f8fafc] even:bg-[#eef2f7] hover:bg-[#e6edf6]">
                     <TableCell>
                       <div className="flex items-center gap-3">
                         <Avatar className="h-8 w-8 border border-primary/10">

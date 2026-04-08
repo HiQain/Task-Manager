@@ -683,7 +683,9 @@ export default function ListView() {
                                     style={provided.draggableProps.style}
                                     className={`relative group grid grid-cols-[minmax(220px,1.6fr)_minmax(170px,1fr)_minmax(120px,0.7fr)_minmax(110px,0.6fr)_minmax(140px,0.7fr)_minmax(120px,0.5fr)] items-center gap-3 border-b px-4 py-3 transition-colors ${snapshot.isDragging
                                       ? "bg-background shadow-lg"
-                                      : "hover:bg-muted/20"
+                                      : index % 2 === 0
+                                        ? "bg-[#f8fafc] hover:bg-[#e6edf6]"
+                                        : "bg-[#eef2f7] hover:bg-[#e6edf6]"
                                       } ${snapshot.combineTargetFor
                                         ? "bg-primary/10"
                                         : ""

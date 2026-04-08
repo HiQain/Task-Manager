@@ -31,10 +31,34 @@ const priorityColors = {
   high: "bg-orange-50 text-orange-600 border-orange-200",
 };
 
+const statusBorderColors = {
+  todo: "border-slate-200",
+  in_progress: "border-blue-200",
+  done: "border-green-200",
+};
+
 function formatDueDate(value?: string | Date | null): string {
   if (!value) return "-";
   const date = parseDateOnly(value);
   return formatShortDate(date);
+}
+
+function getAttachmentMeta(attachment: any, index: number) {
+  if (typeof attachment === "string") {
+    const rawName = attachment.split("/").pop() || `Attachment ${index + 1}`;
+    const name = rawName.split("?")[0];
+    const extension = name.includes(".") ? name.split(".").pop()?.toUpperCase() || "FILE" : "FILE";
+    return { isImage: attachment.startsWith("data:image"), name, extension, href: attachment };
+  }
+
+  const name = attachment?.name || `Attachment ${index + 1}`;
+  const extension = name.includes(".") ? name.split(".").pop()?.toUpperCase() || "FILE" : "FILE";
+  return {
+    isImage: attachment?.type?.startsWith("image/"),
+    name,
+    extension,
+    href: attachment?.data,
+  };
 }
 
 export function TaskCard({ task, index, canEdit, canMove, onEdit, onDelete, onView, onMessage }: TaskCardProps) {
@@ -81,6 +105,7 @@ export function TaskCard({ task, index, canEdit, canMove, onEdit, onDelete, onVi
     return participantIds.size > 0;
   })();
   const isOverdue = isTaskOverdue(task.status, task.dueDate as any);
+  const statusBorderClass = statusBorderColors[task.status as keyof typeof statusBorderColors] || "border-border/60";
 
   return (
     <Draggable draggableId={String(task.id)} index={index} isDragDisabled={!canMove}>
@@ -95,7 +120,8 @@ export function TaskCard({ task, index, canEdit, canMove, onEdit, onDelete, onVi
         >
           <Card
             className={cn(
-              "border-border/60 shadow-sm hover:shadow-md transition-all duration-200",
+              "shadow-sm hover:shadow-md transition-all duration-200",
+              statusBorderClass,
               canMove ? "cursor-grab active:cursor-grabbing" : "cursor-pointer",
               isOverdue && "border-red-200 bg-red-50/40",
               snapshot.isDragging && "shadow-xl ring-2 ring-primary/20 rotate-2",
@@ -174,9 +200,11 @@ export function TaskCard({ task, index, canEdit, canMove, onEdit, onDelete, onVi
                   {adminAssignmentText}
                 </Badge>
               )}
-              <p className="text-xs text-muted-foreground line-clamp-2 mb-3 min-h-[1.5em] whitespace-pre-line break-words">
-                {formatTaskDescription(task.description) || "No description provided."}
-              </p>
+              {formatTaskDescription(task.description) && (
+                <p className="text-xs text-muted-foreground line-clamp-2 mb-3 min-h-[1.5em] whitespace-pre-line break-words">
+                  {formatTaskDescription(task.description)}
+                </p>
+              )}
 
               {/* Attachments preview */}
               {(() => {
@@ -189,23 +217,31 @@ export function TaskCard({ task, index, canEdit, canMove, onEdit, onDelete, onVi
                 if (!attachments || attachments.length === 0) return null;
                 return (
                   <div className="flex gap-2 mb-3">
-                    {attachments.slice(0, 4).map((a: any, i: number) => (
+                    {attachments.slice(0, 4).map((a: any, i: number) => {
+                      const meta = getAttachmentMeta(a, i);
+                      return (
                       <div key={i} className="w-12 h-12 border rounded overflow-hidden bg-white flex items-center justify-center">
-                        {typeof a === 'string' ? (
-                          a.startsWith('data:image') ? (
+                        {meta.isImage ? (
+                          typeof a === 'string' ? (
                             // eslint-disable-next-line @next/next/no-img-element
                             <img src={a} alt={`attachment-${i}`} className="object-cover w-full h-full" />
                           ) : (
-                            <a href={a} className="text-xs p-1">Open</a>
-                          )
-                        ) : a?.type?.startsWith('image/') ? (
                           // eslint-disable-next-line @next/next/no-img-element
-                          <img src={a.data} alt={a.name} className="object-cover w-full h-full" />
+                            <img src={a.data} alt={a.name} className="object-cover w-full h-full" />
+                          )
                         ) : (
-                          <a href={a.data} download={a.name} className="text-xs p-1">{a.name}</a>
+                          <a
+                            href={meta.href}
+                            download={typeof a === "string" ? undefined : meta.name}
+                            className="flex h-full w-full items-center justify-center p-1 text-[10px] font-semibold text-slate-600"
+                            title={meta.name}
+                          >
+                            {meta.extension}
+                          </a>
                         )}
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 );
               })()}
