@@ -8,6 +8,7 @@ import {
   boolean,
   timestamp,
   uniqueIndex,
+  foreignKey,
 } from "drizzle-orm/mysql-core";
 import { z } from "zod";
 
@@ -184,12 +185,22 @@ export const clientCredProjectAccesses = mysqlTable(
   "client_cred_project_accesses",
   {
     id: int("id").autoincrement().primaryKey(),
-    projectId: int("project_id").notNull().references(() => clientCredProjects.id),
-    userId: int("user_id").notNull().references(() => users.id),
+    projectId: int("project_id").notNull(),
+    userId: int("user_id").notNull(),
     access: varchar("access", { length: 16 }).notNull().default("view"),
     createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
   },
   (table) => ({
+    projectFk: foreignKey({
+      columns: [table.projectId],
+      foreignColumns: [clientCredProjects.id],
+      name: "cc_proj_access_project_fk",
+    }),
+    userFk: foreignKey({
+      columns: [table.userId],
+      foreignColumns: [users.id],
+      name: "cc_proj_access_user_fk",
+    }),
     projectUserUnique: uniqueIndex("client_cred_access_project_user_idx").on(table.projectId, table.userId),
   }),
 );

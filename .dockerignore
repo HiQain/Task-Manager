@@ -1,0 +1,30 @@
+.git
+.gitignore
+
+# Dependencies / caches
+node_modules
+**/node_modules
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+*.log
+
+# Build outputs / archives
+dist
+dist.zip
+*.tar.gz
+index.cjs
+
+# Env/secrets
+.env
+.env.*
+
+# Local tooling/editor
+.local
+.vscode
+.idea
+.DS_Store
+
+# Platform-specific
+.replit
+replit.md
