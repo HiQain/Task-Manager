@@ -1,7 +1,28 @@
 node_modules
 dist
+dist.zip
+*.tar.gz
+index.cjs
+
+# Local env/secrets
+.env
+.env.*
+!.env.example
+
+# Local tooling/editor
+.local/
+.vscode/
+.idea/
 .DS_Store
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Hosting/dev-platform files
+.replit
+replit.nix
+
+# Server/client build artifacts (if any)
 server/public
 vite.config.ts.*
-.env
-*.tar.gz

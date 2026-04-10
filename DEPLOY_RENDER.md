@@ -17,10 +17,20 @@ git push
 3. Connect your GitHub repo.
 4. Render will detect `render.yaml` and create:
    - Web service: `simple-task-master`
-   - Postgres DB: `simple-task-master-db`
 5. Click `Apply`.
 
-## 3) Run database migration once
+## 3) Add environment variables
+
+This app uses **MySQL** (Drizzle + `mysql2`).
+
+In Render -> your service -> `Environment`, add:
+
+- `DATABASE_URL` = a MySQL connection string, e.g.
+  - `mysql://user:password@host:3306/database`
+
+You can use any MySQL provider (your VPS MySQL, Aiven MySQL, etc.).
+
+## 4) Run database migration once
 
 After first deploy:
 
@@ -32,7 +42,7 @@ After first deploy:
 npm run db:push
 ```
 
-## 4) Verify deployment
+## 5) Verify deployment
 
 - Open your Render app URL.
 - Health check endpoint should return JSON:
