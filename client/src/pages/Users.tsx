@@ -1,4 +1,4 @@
-import { useUsers, useCreateUser, useDeleteUser, useUpdateUser } from "@/hooks/use-users";
+import { useUsers, useCreateUser, useDeleteUser, useUpdateUser, useUpdateUserStatus } from "@/hooks/use-users";
 import { useAuth } from "@/hooks/use-auth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -8,7 +8,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { insertUserSchema, type InsertUser } from "@shared/schema";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, UserPlus, Trash2, Search, Pencil, Eye, EyeOff } from "lucide-react";
+import { Loader2, UserPlus, Trash2, Search, Pencil, Eye, EyeOff, Power } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useLocation } from "wouter";
 import { useEffect, useMemo, useState } from "react";
@@ -37,6 +37,7 @@ export default function Users() {
   const createUser = useCreateUser();
   const deleteUser = useDeleteUser();
   const updateUser = useUpdateUser();
+  const updateUserStatus = useUpdateUserStatus();
   const { toast } = useToast();
   const [showCreatePassword, setShowCreatePassword] = useState(false);
   const [showEditPassword, setShowEditPassword] = useState(false);
@@ -45,6 +46,8 @@ export default function Users() {
   const [editingUserId, setEditingUserId] = useState<number | null>(null);
   const [isCsvUploading, setIsCsvUploading] = useState(false);
   const [csvFile, setCsvFile] = useState<File | null>(null);
+  const [statusTarget, setStatusTarget] = useState<{ id: number; name: string; isActive: boolean } | null>(null);
+  const [activationPassword, setActivationPassword] = useState("");
   const [editForm, setEditForm] = useState({
     name: "",
     email: "",
@@ -126,6 +129,11 @@ export default function Users() {
     setEditForm({ name: "", email: "", designation: "", password: "", role: "user", allowStorage: false, allowClientCreds: false });
   };
 
+  const closeStatusDialog = () => {
+    setStatusTarget(null);
+    setActivationPassword("");
+  };
+
   const openEditDialog = (member: { id: number; name: string; email: string; designation?: string | null; role: string; allowStorage?: boolean | null; allowClientCreds?: boolean | null }) => {
     setEditingUserId(member.id);
     setEditForm({
@@ -171,6 +179,52 @@ export default function Users() {
       toast({
         title: "Update failed",
         description: error instanceof Error ? error.message : "Something went wrong",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleStatusSubmit = async () => {
+    if (!statusTarget) return;
+
+    try {
+      if (statusTarget.isActive) {
+        await updateUserStatus.mutateAsync({
+          id: statusTarget.id,
+          data: { isActive: false },
+        });
+        toast({
+          title: "Account deactivated",
+          description: "The user has been signed out and can no longer log in.",
+        });
+      } else {
+        const password = activationPassword.trim();
+        if (!password) {
+          toast({
+            title: "Temporary password required",
+            description: "Enter a temporary password before reactivating this account.",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        await updateUserStatus.mutateAsync({
+          id: statusTarget.id,
+          data: {
+            isActive: true,
+            activationPassword: password,
+          },
+        });
+        toast({
+          title: "Account reactivated",
+          description: "The user can sign in with the temporary password and must change it immediately.",
+        });
+      }
+      closeStatusDialog();
+    } catch (error) {
+      toast({
+        title: "Status update failed",
+        description: error instanceof Error ? error.message : "Something went wrong.",
         variant: "destructive",
       });
     }
@@ -482,6 +536,7 @@ export default function Users() {
                 <TableHead className="min-w-[220px]">Email</TableHead>
                 <TableHead className="min-w-[180px]">Designation</TableHead>
                 <TableHead className="min-w-[120px]">Role</TableHead>
+                <TableHead className="min-w-[140px]">Account</TableHead>
                 <TableHead className="min-w-[140px]">Storage</TableHead>
                 <TableHead className="min-w-[160px]">Client Creds</TableHead>
                 <TableHead className="text-right min-w-[100px]">Actions</TableHead>
@@ -490,7 +545,7 @@ export default function Users() {
             <TableBody>
               {filteredUsers.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="h-36 text-center text-muted-foreground">
+                  <TableCell colSpan={8} className="h-36 text-center text-muted-foreground">
                     {search.trim() ? "No matching team member found." : "No users found."}
                   </TableCell>
                 </TableRow>
@@ -530,6 +585,22 @@ export default function Users() {
                     <TableCell>
                       <Badge
                         variant="outline"
+                        className={member.isActive === false
+                          ? "text-rose-700 bg-rose-50 border-rose-100"
+                          : member.mustChangePassword
+                            ? "text-amber-700 bg-amber-50 border-amber-100"
+                            : "text-emerald-700 bg-emerald-50 border-emerald-100"}
+                      >
+                        {member.isActive === false
+                          ? "Deactivated"
+                          : member.mustChangePassword
+                            ? "Password Reset Required"
+                            : "Active"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Badge
+                        variant="outline"
                         className={storageAllowed
                           ? "text-emerald-700 bg-emerald-50 border-emerald-100"
                           : "text-slate-600 bg-slate-50 border-slate-100"}
@@ -548,24 +619,43 @@ export default function Users() {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 text-muted-foreground hover:text-primary"
-                        onClick={() => openEditDialog(member)}
-                      >
-                        <Pencil className="w-4 h-4" />
-                      </Button>
-                      {member.email.toLowerCase() !== "admin@hiqain.com" && (
+                      <div className="flex items-center justify-end gap-2">
+                        {member.id !== user?.id && (
+                          <Button
+                            variant={member.isActive === false ? "outline" : "destructive"}
+                            size="sm"
+                            className={member.isActive === false
+                              ? "h-8 border-emerald-200 px-3 text-emerald-700 hover:bg-emerald-50"
+                              : "h-8 px-3"}
+                            onClick={() => setStatusTarget({
+                              id: member.id,
+                              name: member.name,
+                              isActive: member.isActive !== false,
+                            })}
+                          >
+                            <Power className="mr-1.5 h-3.5 w-3.5" />
+                            {member.isActive === false ? "Activate" : "Deactivate"}
+                          </Button>
+                        )}
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                          onClick={() => handleDelete(member.id, member.name)}
+                          className="h-8 w-8 text-muted-foreground hover:text-primary"
+                          onClick={() => openEditDialog(member)}
                         >
-                          <Trash2 className="w-4 h-4" />
+                          <Pencil className="w-4 h-4" />
                         </Button>
-                      )}
+                        {member.email.toLowerCase() !== "admin@hiqain.com" && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                            onClick={() => handleDelete(member.id, member.name)}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>
                   );
@@ -702,6 +792,40 @@ export default function Users() {
             <Button variant="destructive" type="button" onClick={confirmDelete} disabled={deleteUser.isPending}>
               {deleteUser.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Delete"}
             </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={statusTarget !== null} onOpenChange={(open) => (!open ? closeStatusDialog() : undefined)}>
+        <DialogContent className="w-[calc(100vw-2rem)] sm:w-full sm:max-w-[460px] fixed !top-1/2 !left-1/2 !-translate-x-1/2 !-translate-y-1/2">
+          <DialogHeader>
+            <DialogTitle>{statusTarget?.isActive ? "Deactivate Account" : "Reactivate Account"}</DialogTitle>
+            <DialogDescription>
+              {statusTarget?.isActive
+                ? `Deactivate ${statusTarget?.name || "this user"} and immediately end their current session.`
+                : `Reactivate ${statusTarget?.name || "this user"} with a temporary password. They must change it before using the app.`}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            {!statusTarget?.isActive && (
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Temporary Password</label>
+                <Input
+                  type="text"
+                  value={activationPassword}
+                  onChange={(event) => setActivationPassword(event.target.value)}
+                  placeholder="Enter a temporary password"
+                />
+              </div>
+            )}
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="outline" type="button" onClick={closeStatusDialog}>
+                Cancel
+              </Button>
+              <Button type="button" onClick={() => void handleStatusSubmit()} disabled={updateUserStatus.isPending}>
+                {updateUserStatus.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : statusTarget?.isActive ? "Deactivate" : "Reactivate"}
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
