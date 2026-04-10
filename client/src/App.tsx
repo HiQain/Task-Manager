@@ -18,6 +18,7 @@ import { initPushNotifications } from "@/lib/push";
 
 // Pages
 import Overview from "@/pages/Overview";
+import Todo from "@/pages/Todo";
 import BoardView from "@/pages/BoardView";
 import ListView from "@/pages/ListView";
 import Users from "@/pages/Users";
@@ -29,6 +30,7 @@ import Profile from "@/pages/Profile";
 import Storage from "@/pages/Storage";
 import Reminder from "@/pages/Reminder";
 import ClientCreds from "@/pages/ClientCreds";
+import PasswordResetRequired from "@/pages/PasswordResetRequired";
 
 function Router() {
   const { user } = useAuth();
@@ -40,6 +42,18 @@ function Router() {
       <Route path="/">
         <ProtectedRoute>
           {user?.role === "admin" ? <Overview /> : <BoardView />}
+        </ProtectedRoute>
+      </Route>
+
+      <Route path="/todo">
+        <ProtectedRoute>
+          <Todo />
+        </ProtectedRoute>
+      </Route>
+
+      <Route path="/password-reset">
+        <ProtectedRoute>
+          <PasswordResetRequired />
         </ProtectedRoute>
       </Route>
 
@@ -127,7 +141,9 @@ function Layout({ children }: { children: React.ReactNode }) {
 
   const getPageTitle = (path: string) => {
     switch (path) {
-      case "/": return "Overview";
+      case "/": return user?.role === "admin" ? "Overview" : "Hiqain Board";
+      case "/todo": return "Todo Lists";
+      case "/password-reset": return "Password Reset";
       case "/board": return "Hiqain Board";
       case "/list": return "All Tasks";
       case "/users": return "Team Management";

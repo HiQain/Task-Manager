@@ -10,13 +10,19 @@ interface ProtectedRouteProps {
 
 export function ProtectedRoute({ children, requiredRole }: ProtectedRouteProps) {
   const { user, isLoading, isAuthenticated } = useAuth();
-  const [, setLocation] = useLocation();
+  const [location, setLocation] = useLocation();
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
       setLocation('/login');
     }
   }, [isLoading, isAuthenticated, setLocation]);
+
+  useEffect(() => {
+    if (!isLoading && isAuthenticated && user?.mustChangePassword && location !== "/password-reset") {
+      setLocation("/password-reset");
+    }
+  }, [isAuthenticated, isLoading, location, setLocation, user?.mustChangePassword]);
 
   if (isLoading) {
     return (
@@ -30,6 +36,10 @@ export function ProtectedRoute({ children, requiredRole }: ProtectedRouteProps) 
   }
 
   if (!isAuthenticated) {
+    return null;
+  }
+
+  if (user?.mustChangePassword && location !== "/password-reset") {
     return null;
   }
 

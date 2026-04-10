@@ -465,8 +465,8 @@ export default function ClientCreds() {
               </CardTitle>
               <p className="mt-1 text-xs text-muted-foreground">Browse all clients and review their associated projects in one place.</p>
             </div>
-            <div className="flex flex-wrap gap-2">
-              <div className="relative min-w-[300px] flex-1 sm:max-w-md">
+            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap">
+              <div className="relative w-full sm:min-w-[300px] sm:flex-1 sm:max-w-md">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   value={searchTerm}
@@ -475,7 +475,7 @@ export default function ClientCreds() {
                   className="pl-9"
                 />
               </div>
-              <Button type="button" onClick={openCreateDialog}>
+              <Button type="button" onClick={openCreateDialog} className="w-full sm:w-auto">
                 <Plus className="h-4 w-4" />
                 New Client Creds
               </Button>
@@ -493,7 +493,85 @@ export default function ClientCreds() {
               <p className="text-sm text-muted-foreground">No matching client creds found for your search.</p>
             ) : (
               <div className="flex h-full min-h-0 flex-col space-y-4">
-                <div className="min-h-0 max-h-[calc(100vh-18rem)] flex-1 overflow-auto border bg-background">
+                <div className="space-y-4 md:hidden">
+                  {filteredClientGroups.map((group) => (
+                    <div key={group.key} className="space-y-3">
+                      <div className="rounded-xl border border-border/60 bg-muted/20 px-4 py-3">
+                        <p className="font-semibold">{group.clientName}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">{group.projects.length} project(s)</p>
+                      </div>
+
+                      {group.projects.map((project) => (
+                        <div key={project.id} className="rounded-xl border border-border/60 bg-background p-4 shadow-sm">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="font-semibold">{project.projectName}</p>
+                              {!project.canEdit && (
+                                <span className="mt-2 inline-flex rounded-full border px-2 py-0.5 text-[11px] text-muted-foreground">
+                                  Read only
+                                </span>
+                              )}
+                              <p className="mt-2 text-xs text-muted-foreground">Updated {formatDate(project.updatedAt)}</p>
+                            </div>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button type="button" variant="ghost" size="icon" className="h-8 w-8 border">
+                                  <MoreHorizontal className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="w-40">
+                                {project.canDelete && (
+                                  <DropdownMenuItem onClick={() => openAccessDialog(project)}>
+                                    <ShieldCheck className="mr-2 h-4 w-4" />
+                                    Access
+                                  </DropdownMenuItem>
+                                )}
+                                {project.canEdit && (
+                                  <DropdownMenuItem onClick={() => openEditProjectDialog(project)}>
+                                    <Pencil className="mr-2 h-4 w-4" />
+                                    Edit
+                                  </DropdownMenuItem>
+                                )}
+                                {project.canDelete && (
+                                  <DropdownMenuItem
+                                    onClick={() => openDeleteDialog(project)}
+                                    className="text-destructive focus:text-destructive"
+                                  >
+                                    <Trash2 className="mr-2 h-4 w-4" />
+                                    Delete
+                                  </DropdownMenuItem>
+                                )}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </div>
+
+                          <div className="mt-4 space-y-3">
+                            {buildRowsFromProject(project).map((row, rowIndex) => (
+                              <div key={`${project.id}-${rowIndex}`} className="rounded-lg border border-border/60 bg-muted/10 p-3">
+                                <div className="grid gap-3 text-sm">
+                                  <div>
+                                    <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Via</p>
+                                    <p className="mt-1 break-words">{row.via || "-"}</p>
+                                  </div>
+                                  <div>
+                                    <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Email / Value</p>
+                                    <p className="mt-1 break-all">{row.value || "-"}</p>
+                                  </div>
+                                  <div>
+                                    <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Password</p>
+                                    <p className="mt-1 break-all">{row.password || "-"}</p>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+
+                <div className="hidden min-h-0 max-h-[calc(100vh-18rem)] flex-1 overflow-auto border bg-background md:block">
                   <table className="min-w-[980px] w-full border-separate border-spacing-0 text-sm">
                     <thead className="sticky top-0 z-10 bg-muted/30 backdrop-blur">
                       <tr>
@@ -672,7 +750,7 @@ export default function ClientCreds() {
                   </div>
 
                   <div className="overflow-hidden rounded-lg border">
-                    <div className="grid grid-cols-[minmax(180px,1.2fr)_minmax(180px,1.5fr)_minmax(180px,1.2fr)_56px] gap-0 border-b bg-muted/40 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    <div className="hidden grid-cols-[minmax(180px,1.2fr)_minmax(180px,1.5fr)_minmax(180px,1.2fr)_56px] gap-0 border-b bg-muted/40 text-xs font-semibold uppercase tracking-wide text-muted-foreground md:grid">
                       <div className="px-3 py-3">Via Type</div>
                       <div className="border-l px-3 py-3">Email / Value</div>
                       <div className="border-l px-3 py-3">Password</div>

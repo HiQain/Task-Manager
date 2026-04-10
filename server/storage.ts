@@ -43,7 +43,13 @@ import {
   type InsertStorageProject,
   type InsertTask,
   type InsertUser,
-  type UpdateTaskRequest
+  type UpdateTaskRequest,
+  type TodoList,
+  type TodoItem,
+  type InsertTodoList,
+  type InsertTodoItem,
+  todoLists,
+  todoItems,
 } from "@shared/schema";
 import { and, asc, desc, eq, inArray, isNull, lte, ne, or } from "drizzle-orm";
 import crypto from "crypto";
@@ -157,6 +163,18 @@ export interface IStorage {
   deleteClientCredProject(id: number): Promise<void>;
   getClientCredProjectAccesses(projectId: number): Promise<ClientCredProjectAccess[]>;
   replaceClientCredProjectAccesses(projectId: number, members: Array<{ userId: number; access: "view" | "edit" }>): Promise<void>;
+
+  // Todo lists
+  getTodoLists(): Promise<TodoList[]>;
+  getTodoList(id: number): Promise<TodoList | undefined>;
+  createTodoList(data: InsertTodoList & { createdById: number }): Promise<TodoList>;
+  updateTodoList(id: number, data: InsertTodoList): Promise<TodoList>;
+  deleteTodoList(id: number): Promise<void>;
+  getTodoItems(listId: number): Promise<TodoItem[]>;
+  getTodoItem(id: number): Promise<TodoItem | undefined>;
+  createTodoItem(data: InsertTodoItem & { listId: number }): Promise<TodoItem>;
+  updateTodoItem(id: number, data: Partial<InsertTodoItem>): Promise<TodoItem>;
+  deleteTodoItem(id: number): Promise<void>;
 }
 
 function hashPassword(password: string): string {
@@ -957,6 +975,117 @@ export class DatabaseStorage implements IStorage {
         access: member.access,
       })),
     );
+  }
+
+  async getTodoLists(): Promise<TodoList[]> {
+    return await db.select().from(todoLists).orderBy(desc(todoLists.updatedAt), desc(todoLists.createdAt));
+  }
+
+  async getTodoList(id: number): Promise<TodoList | undefined> {
+    const [list] = await db.select().from(todoLists).where(eq(todoLists.id, id));
+    return list;
+  }
+
+  async createTodoList(data: InsertTodoList & { createdById: number }): Promise<TodoList> {
+    const insertResult = await db.insert(todoLists).values({
+      title: data.title,
+      createdById: data.createdById,
+      updatedAt: new Date(),
+    });
+    const id = extractInsertId(insertResult);
+    const [list] = await db.select().from(todoLists).where(eq(todoLists.id, id));
+    if (!list) {
+      throw new Error("Failed to create todo list");
+    }
+    return list;
+  }
+
+  async updateTodoList(id: number, data: InsertTodoList): Promise<TodoList> {
+    await db
+      .update(todoLists)
+      .set({
+        title: data.title,
+        updatedAt: new Date(),
+      })
+      .where(eq(todoLists.id, id));
+
+    const [list] = await db.select().from(todoLists).where(eq(todoLists.id, id));
+    if (!list) {
+      throw new Error("Todo list not found");
+    }
+    return list;
+  }
+
+  async deleteTodoList(id: number): Promise<void> {
+    await db.delete(todoItems).where(eq(todoItems.listId, id));
+    await db.delete(todoLists).where(eq(todoLists.id, id));
+  }
+
+  async getTodoItems(listId: number): Promise<TodoItem[]> {
+    return await db
+      .select()
+      .from(todoItems)
+      .where(eq(todoItems.listId, listId))
+      .orderBy(asc(todoItems.sortOrder), asc(todoItems.id));
+  }
+
+  async getTodoItem(id: number): Promise<TodoItem | undefined> {
+    const [item] = await db.select().from(todoItems).where(eq(todoItems.id, id));
+    return item;
+  }
+
+  async createTodoItem(data: InsertTodoItem & { listId: number }): Promise<TodoItem> {
+    const existingItems = await this.getTodoItems(data.listId);
+    const fallbackSortOrder =
+      existingItems.length > 0
+        ? (existingItems[existingItems.length - 1]?.sortOrder || 0) + 1024
+        : 1024;
+    const insertResult = await db.insert(todoItems).values({
+      listId: data.listId,
+      content: data.content,
+      completed: !!data.completed,
+      sortOrder: data.sortOrder ?? fallbackSortOrder,
+      updatedAt: new Date(),
+    });
+    const id = extractInsertId(insertResult);
+    const [item] = await db.select().from(todoItems).where(eq(todoItems.id, id));
+    if (!item) {
+      throw new Error("Failed to create todo item");
+    }
+    await db.update(todoLists).set({ updatedAt: new Date() }).where(eq(todoLists.id, data.listId));
+    return item;
+  }
+
+  async updateTodoItem(id: number, data: Partial<InsertTodoItem>): Promise<TodoItem> {
+    const existing = await this.getTodoItem(id);
+    if (!existing) {
+      throw new Error("Todo item not found");
+    }
+
+    await db
+      .update(todoItems)
+      .set({
+        ...(data.content !== undefined ? { content: data.content } : {}),
+        ...(data.completed !== undefined ? { completed: !!data.completed } : {}),
+        ...(data.sortOrder !== undefined ? { sortOrder: data.sortOrder } : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(todoItems.id, id));
+
+    await db.update(todoLists).set({ updatedAt: new Date() }).where(eq(todoLists.id, existing.listId));
+
+    const [item] = await db.select().from(todoItems).where(eq(todoItems.id, id));
+    if (!item) {
+      throw new Error("Todo item not found");
+    }
+    return item;
+  }
+
+  async deleteTodoItem(id: number): Promise<void> {
+    const existing = await this.getTodoItem(id);
+    if (!existing) return;
+    await db.delete(todoItems).where(eq(todoItems.id, id));
+    await db.update(todoLists).set({ updatedAt: new Date() }).where(eq(todoLists.id, existing.listId));
   }
 }
 

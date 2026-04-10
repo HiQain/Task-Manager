@@ -50,3 +50,25 @@ export function useUpdateUser() {
     },
   });
 }
+
+export function useUpdateUserStatus() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      data,
+    }: {
+      id: number;
+      data: { isActive: boolean; activationPassword?: string };
+    }) => {
+      const validated = api.users.updateStatus.input.parse(data);
+      const res = await apiRequest("POST", buildUrl(api.users.updateStatus.path, { id }), validated);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [api.users.list.path] });
+      queryClient.invalidateQueries({ queryKey: [api.auth.me.path] });
+      queryClient.invalidateQueries({ queryKey: [api.chats.users.path] });
+    },
+  });
+}

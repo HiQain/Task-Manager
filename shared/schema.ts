@@ -23,6 +23,8 @@ export const users = mysqlTable("users", {
   role: varchar("role", { length: 20 }).notNull().default("user"),
   allowStorage: boolean("allow_storage").notNull().default(false),
   allowClientCreds: boolean("allow_client_creds").notNull().default(false),
+  isActive: boolean("is_active").notNull().default(true),
+  mustChangePassword: boolean("must_change_password").notNull().default(false),
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
 });
 
@@ -205,6 +207,24 @@ export const clientCredProjectAccesses = mysqlTable(
   }),
 );
 
+export const todoLists = mysqlTable("todo_lists", {
+  id: int("id").autoincrement().primaryKey(),
+  title: varchar("title", { length: 255 }).notNull(),
+  createdById: int("created_by_id").notNull().references(() => users.id),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow(),
+});
+
+export const todoItems = mysqlTable("todo_items", {
+  id: int("id").autoincrement().primaryKey(),
+  listId: int("list_id").notNull().references(() => todoLists.id),
+  content: varchar("content", { length: 255 }).notNull(),
+  completed: boolean("completed").notNull().default(false),
+  sortOrder: int("sort_order").notNull().default(0),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow(),
+});
+
 export const insertUserSchema = z.object({
   name: z.string().min(1),
   email: z.string().email(),
@@ -358,6 +378,29 @@ export const updateClientCredProjectAccessSchema = z.object({
   ),
 });
 
+export const updateUserStatusSchema = z.object({
+  isActive: z.boolean(),
+  activationPassword: z.string().min(6, "Temporary password must be at least 6 characters").optional(),
+});
+
+export const insertTodoListSchema = z.object({
+  title: z.string().trim().min(1, "List title is required").max(255),
+});
+
+export const updateTodoListSchema = insertTodoListSchema;
+
+export const insertTodoItemSchema = z.object({
+  content: z.string().trim().min(1, "Item title is required").max(255),
+  completed: z.boolean().optional(),
+  sortOrder: z.number().int().optional(),
+});
+
+export const updateTodoItemSchema = z.object({
+  content: z.string().trim().min(1, "Item title is required").max(255).optional(),
+  completed: z.boolean().optional(),
+  sortOrder: z.number().int().optional(),
+});
+
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type Task = typeof tasks.$inferSelect;
@@ -390,3 +433,10 @@ export type InsertClientCredProject = z.infer<typeof insertClientCredProjectSche
 export type UpdateClientCredProject = z.infer<typeof updateClientCredProjectSchema>;
 export type ClientCredProjectAccess = typeof clientCredProjectAccesses.$inferSelect;
 export type UpdateClientCredProjectAccess = z.infer<typeof updateClientCredProjectAccessSchema>;
+export type UpdateUserStatus = z.infer<typeof updateUserStatusSchema>;
+export type TodoList = typeof todoLists.$inferSelect;
+export type InsertTodoList = z.infer<typeof insertTodoListSchema>;
+export type UpdateTodoList = z.infer<typeof updateTodoListSchema>;
+export type TodoItem = typeof todoItems.$inferSelect;
+export type InsertTodoItem = z.infer<typeof insertTodoItemSchema>;
+export type UpdateTodoItem = z.infer<typeof updateTodoItemSchema>;

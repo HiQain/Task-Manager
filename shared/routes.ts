@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { clientCredProjects, insertClientCredProjectSchema, insertMessageSchema, insertPushSubscriptionSchema, insertStorageFileSchema, insertStorageProjectSchema, insertTaskCommentSchema, insertTaskGroupMessageSchema, insertTaskSchema, insertUserSchema, messages, notifications, reminderSyncSchema, storageFiles, storageProjects, taskChatGroups, taskComments, taskGroupMessages, tasks, updateClientCredProjectAccessSchema, updateClientCredProjectSchema, updateStorageProjectAccessSchema, users } from './schema';
+import { clientCredProjects, insertClientCredProjectSchema, insertMessageSchema, insertPushSubscriptionSchema, insertStorageFileSchema, insertStorageProjectSchema, insertTaskCommentSchema, insertTaskGroupMessageSchema, insertTaskSchema, insertTodoItemSchema, insertTodoListSchema, insertUserSchema, messages, notifications, reminderSyncSchema, storageFiles, storageProjects, taskChatGroups, taskComments, taskGroupMessages, tasks, todoItems, todoLists, updateClientCredProjectAccessSchema, updateClientCredProjectSchema, updateStorageProjectAccessSchema, updateTodoItemSchema, updateTodoListSchema, updateUserStatusSchema, users } from './schema';
 
 export const errorSchemas = {
   validation: z.object({
@@ -94,6 +94,16 @@ export const api = {
         allowStorage: z.boolean().optional(),
         allowClientCreds: z.boolean().optional(),
       }),
+      responses: {
+        200: z.custom<typeof users.$inferSelect>(),
+        400: errorSchemas.validation,
+        404: errorSchemas.notFound,
+      },
+    },
+    updateStatus: {
+      method: 'POST' as const,
+      path: '/api/users/:id/status',
+      input: updateUserStatusSchema,
       responses: {
         200: z.custom<typeof users.$inferSelect>(),
         400: errorSchemas.validation,
@@ -521,6 +531,88 @@ export const api = {
         400: errorSchemas.validation,
         401: errorSchemas.notFound,
         403: errorSchemas.notFound,
+        404: errorSchemas.notFound,
+      },
+    },
+  },
+  todos: {
+    list: {
+      method: 'GET' as const,
+      path: '/api/todos',
+      responses: {
+        200: z.object({
+          lists: z.array(
+            z.object({
+              list: z.custom<typeof todoLists.$inferSelect>(),
+              items: z.array(z.custom<typeof todoItems.$inferSelect>()),
+              creatorName: z.string(),
+              canEdit: z.boolean(),
+            }),
+          ),
+        }),
+        401: errorSchemas.notFound,
+      },
+    },
+    createList: {
+      method: 'POST' as const,
+      path: '/api/todos/lists',
+      input: insertTodoListSchema,
+      responses: {
+        201: z.custom<typeof todoLists.$inferSelect>(),
+        400: errorSchemas.validation,
+        401: errorSchemas.notFound,
+      },
+    },
+    updateList: {
+      method: 'PATCH' as const,
+      path: '/api/todos/lists/:id',
+      input: updateTodoListSchema,
+      responses: {
+        200: z.custom<typeof todoLists.$inferSelect>(),
+        400: errorSchemas.validation,
+        401: errorSchemas.notFound,
+        404: errorSchemas.notFound,
+      },
+    },
+    deleteList: {
+      method: 'DELETE' as const,
+      path: '/api/todos/lists/:id',
+      responses: {
+        200: z.object({ success: z.boolean() }),
+        400: errorSchemas.validation,
+        401: errorSchemas.notFound,
+        404: errorSchemas.notFound,
+      },
+    },
+    createItem: {
+      method: 'POST' as const,
+      path: '/api/todos/lists/:id/items',
+      input: insertTodoItemSchema,
+      responses: {
+        201: z.custom<typeof todoItems.$inferSelect>(),
+        400: errorSchemas.validation,
+        401: errorSchemas.notFound,
+        404: errorSchemas.notFound,
+      },
+    },
+    updateItem: {
+      method: 'PATCH' as const,
+      path: '/api/todos/items/:id',
+      input: updateTodoItemSchema,
+      responses: {
+        200: z.custom<typeof todoItems.$inferSelect>(),
+        400: errorSchemas.validation,
+        401: errorSchemas.notFound,
+        404: errorSchemas.notFound,
+      },
+    },
+    deleteItem: {
+      method: 'DELETE' as const,
+      path: '/api/todos/items/:id',
+      responses: {
+        200: z.object({ success: z.boolean() }),
+        400: errorSchemas.validation,
+        401: errorSchemas.notFound,
         404: errorSchemas.notFound,
       },
     },

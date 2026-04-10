@@ -22,7 +22,9 @@ export default function Login() {
     // Redirect to dashboard after successful login
     useEffect(() => {
         if (isAuthenticated && user) {
-            if (user.role === "admin") {
+            if (user.mustChangePassword) {
+                setLocation('/password-reset');
+            } else if (user.role === "admin") {
                 setLocation('/');
             } else {
                 setLocation('/board');

@@ -1,5 +1,8 @@
 import type { Express, Request } from "express";
 import type { Server } from "http";
+import fs from "node:fs/promises";
+import path from "node:path";
+import mysql from "mysql2/promise";
 import { storage } from "./storage";
 import { api } from "@shared/routes";
 import { z } from "zod";
@@ -8,6 +11,7 @@ import webpush from "web-push";
 import session from "express-session";
 import { WebSocketServer, WebSocket } from "ws";
 import "express-session";
+import { fileURLToPath } from "node:url";
 
 declare module "express-session" {
   interface SessionData {
@@ -75,6 +79,10 @@ function hasStorageFeature(user: any): boolean {
 
 function hasClientCredsFeature(user: any): boolean {
   return !!user && (isAdminUser(user) || !!user.allowClientCreds);
+}
+
+function isUserActive(user: any): boolean {
+  return !!user && user.isActive !== false;
 }
 
 function isDeletedUser(user: any): boolean {
@@ -165,6 +173,11 @@ function parseStringList(value: unknown): string[] {
     }
   }
   return [];
+}
+
+function canManageTodoList(user: any, list: any): boolean {
+  if (!user || !list) return false;
+  return isAdminUser(user) || list.createdById === user.id;
 }
 
 export async function registerRoutes(
@@ -594,7 +607,7 @@ export async function registerRoutes(
         return next();
       }
       storage.getUser(req.session.userId).then((user) => {
-        if (user && isDeletedUser(user)) {
+        if (user && (isDeletedUser(user) || !isUserActive(user))) {
           activeSessionByUserId.delete(req.session.userId as number);
           req.session.userId = undefined;
           req.user = undefined;
@@ -618,7 +631,13 @@ export async function registerRoutes(
       const input = api.auth.login.input.parse(req.body);
       const user = await storage.getUserByEmail(input.email);
 
-      if (!user || isDeletedUser(user) || !verifyPassword(input.password, user.password)) {
+      if (!user || isDeletedUser(user)) {
+        return res.status(401).json({ message: "Invalid email or password" });
+      }
+      if (!isUserActive(user)) {
+        return res.status(401).json({ message: "This account has been deactivated. Please contact an administrator." });
+      }
+      if (!verifyPassword(input.password, user.password)) {
         return res.status(401).json({ message: "Invalid email or password" });
       }
 
@@ -675,7 +694,7 @@ export async function registerRoutes(
       if (!verifyPassword(input.currentPassword, req.user.password)) {
         return res.status(400).json({ message: "Current password is incorrect" });
       }
-      await storage.updateUser(req.user.id, { password: input.newPassword });
+      await storage.updateUser(req.user.id, { password: input.newPassword, mustChangePassword: false } as any);
       res.json({ message: "Password updated" });
     } catch (err) {
       if (err instanceof z.ZodError) {
@@ -766,6 +785,71 @@ export async function registerRoutes(
     }
   });
 
+  app.post(api.users.updateStatus.path, async (req, res) => {
+    if (!req.user || !isAdminUser(req.user)) {
+      return res.status(403).json({ message: "Only admins can update user status" });
+    }
+
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id)) {
+        return res.status(400).json({ message: "Invalid user id" });
+      }
+      if (id === req.user.id) {
+        return res.status(400).json({ message: "You cannot deactivate your own account" });
+      }
+
+      const existing = await storage.getUser(id);
+      if (!existing) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      const input = api.users.updateStatus.input.parse(req.body);
+
+      if (!input.isActive) {
+        const updatedUser = await storage.updateUser(id, {
+          isActive: false,
+          mustChangePassword: false,
+        } as any);
+
+        const activeSessionId = activeSessionByUserId.get(id);
+        if (activeSessionId) {
+          req.sessionStore.destroy(activeSessionId, () => {
+            // ignore destroy errors
+          });
+          activeSessionByUserId.delete(id);
+        }
+
+        const sockets = wsClientsByUserId.get(id);
+        sockets?.forEach((socket) => socket.close());
+        wsClientsByUserId.delete(id);
+
+        return res.json(updatedUser);
+      }
+
+      const activationPassword = String(input.activationPassword || "").trim();
+      if (!activationPassword) {
+        return res.status(400).json({ message: "A temporary password is required to reactivate this account." });
+      }
+
+      const updatedUser = await storage.updateUser(id, {
+        isActive: true,
+        password: activationPassword,
+        mustChangePassword: true,
+      } as any);
+
+      res.json(updatedUser);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({
+          message: err.errors[0].message,
+          field: err.errors[0].path.join("."),
+        });
+      }
+      throw err;
+    }
+  });
+
   app.delete(api.users.delete.path, async (req, res) => {
     if (!req.user || !isAdminUser(req.user)) {
       return res.status(403).json({ message: "Only admins can delete users" });
@@ -839,6 +923,198 @@ export async function registerRoutes(
       return res.status(404).json({ message: "Notification not found" });
     }
     await storage.deleteNotification(id);
+    res.json({ success: true });
+  });
+
+  // Todo Lists API
+  app.get(api.todos.list.path, async (req, res) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+
+    const allLists = await storage.getTodoLists();
+    const visibleLists = isAdminUser(req.user)
+      ? allLists
+      : allLists.filter((list) => list.createdById === req.user.id);
+    const allUsers = await storage.getUsers();
+
+    const payload = await Promise.all(
+      visibleLists.map(async (list) => {
+        const items = await storage.getTodoItems(list.id);
+        const creator = allUsers.find((user) => user.id === list.createdById);
+        return {
+          list,
+          items,
+          creatorName: creator?.name || "Unknown user",
+          canEdit: canManageTodoList(req.user, list),
+        };
+      }),
+    );
+
+    res.json({ lists: payload });
+  });
+
+  app.post(api.todos.createList.path, async (req, res) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+
+    try {
+      const input = api.todos.createList.input.parse(req.body);
+      const list = await storage.createTodoList({ ...input, createdById: req.user.id });
+      res.status(201).json(list);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({
+          message: err.errors[0].message,
+          field: err.errors[0].path.join("."),
+        });
+      }
+      throw err;
+    }
+  });
+
+  app.patch(api.todos.updateList.path, async (req, res) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id)) {
+        return res.status(400).json({ message: "Invalid list id" });
+      }
+      const existing = await storage.getTodoList(id);
+      if (!existing) {
+        return res.status(404).json({ message: "Todo list not found" });
+      }
+      if (!canManageTodoList(req.user, existing)) {
+        return res.status(403).json({ message: "You do not have permission to edit this list" });
+      }
+      const input = api.todos.updateList.input.parse(req.body);
+      const updated = await storage.updateTodoList(id, input);
+      res.json(updated);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({
+          message: err.errors[0].message,
+          field: err.errors[0].path.join("."),
+        });
+      }
+      throw err;
+    }
+  });
+
+  app.delete(api.todos.deleteList.path, async (req, res) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ message: "Invalid list id" });
+    }
+
+    const existing = await storage.getTodoList(id);
+    if (!existing) {
+      return res.status(404).json({ message: "Todo list not found" });
+    }
+    if (!canManageTodoList(req.user, existing)) {
+      return res.status(403).json({ message: "You do not have permission to delete this list" });
+    }
+
+    await storage.deleteTodoList(id);
+    res.json({ success: true });
+  });
+
+  app.post(api.todos.createItem.path, async (req, res) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+
+    try {
+      const listId = Number(req.params.id);
+      if (!Number.isFinite(listId)) {
+        return res.status(400).json({ message: "Invalid list id" });
+      }
+      const existingList = await storage.getTodoList(listId);
+      if (!existingList) {
+        return res.status(404).json({ message: "Todo list not found" });
+      }
+      if (!canManageTodoList(req.user, existingList)) {
+        return res.status(403).json({ message: "You do not have permission to edit this list" });
+      }
+      const input = api.todos.createItem.input.parse(req.body);
+      const item = await storage.createTodoItem({ ...input, listId });
+      res.status(201).json(item);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({
+          message: err.errors[0].message,
+          field: err.errors[0].path.join("."),
+        });
+      }
+      throw err;
+    }
+  });
+
+  app.patch(api.todos.updateItem.path, async (req, res) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id)) {
+        return res.status(400).json({ message: "Invalid item id" });
+      }
+      const existingItem = await storage.getTodoItem(id);
+      if (!existingItem) {
+        return res.status(404).json({ message: "Todo item not found" });
+      }
+      const existingList = await storage.getTodoList(existingItem.listId);
+      if (!existingList) {
+        return res.status(404).json({ message: "Todo list not found" });
+      }
+      if (!canManageTodoList(req.user, existingList)) {
+        return res.status(403).json({ message: "You do not have permission to edit this list" });
+      }
+      const input = api.todos.updateItem.input.parse(req.body);
+      const updated = await storage.updateTodoItem(id, input);
+      res.json(updated);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({
+          message: err.errors[0].message,
+          field: err.errors[0].path.join("."),
+        });
+      }
+      throw err;
+    }
+  });
+
+  app.delete(api.todos.deleteItem.path, async (req, res) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ message: "Invalid item id" });
+    }
+    const existingItem = await storage.getTodoItem(id);
+    if (!existingItem) {
+      return res.status(404).json({ message: "Todo item not found" });
+    }
+    const existingList = await storage.getTodoList(existingItem.listId);
+    if (!existingList) {
+      return res.status(404).json({ message: "Todo list not found" });
+    }
+    if (!canManageTodoList(req.user, existingList)) {
+      return res.status(403).json({ message: "You do not have permission to edit this list" });
+    }
+
+    await storage.deleteTodoItem(id);
     res.json({ success: true });
   });
 
@@ -2063,6 +2339,9 @@ export async function registerRoutes(
     res.json({ success: true });
   });
 
+  // Ensure schema changes exist before any startup reads or seed logic runs.
+  await applyPendingMigrations();
+
   // Seed Data
   await seedDatabase();
 
@@ -2157,5 +2436,58 @@ async function seedDatabase() {
       return;
     }
     console.error("❌ Seed failed:", e);
+  }
+}
+
+async function applyPendingMigrations() {
+  let connection: mysql.Connection | null = null;
+  try {
+    const currentDir = path.dirname(fileURLToPath(import.meta.url));
+    const migrationsDir = path.resolve(currentDir, "../migrations");
+    const migrationFiles = (await fs.readdir(migrationsDir))
+      .filter((file) => file.endsWith(".sql"))
+      .sort();
+
+    if (migrationFiles.length === 0) {
+      return;
+    }
+
+    console.log("🛠️ Applying database migrations...");
+    const databaseUrl = process.env.DATABASE_URL;
+    if (!databaseUrl) {
+      throw new Error("DATABASE_URL is not set.");
+    }
+
+    connection = await mysql.createConnection({
+      uri: databaseUrl,
+      multipleStatements: true,
+    });
+
+    for (const migrationFile of migrationFiles) {
+      const migrationPath = path.join(migrationsDir, migrationFile);
+      const sql = await fs.readFile(migrationPath, "utf8");
+      try {
+        await connection.query(sql);
+        console.log(`✅ Migration applied: ${migrationFile}`);
+      } catch (error: any) {
+        const code = error?.code;
+        if (
+          code === "ER_DUP_KEYNAME" ||
+          code === "ER_TABLE_EXISTS_ERROR" ||
+          code === "ER_DUP_FIELDNAME"
+        ) {
+          console.log(`ℹ️ Migration already satisfied: ${migrationFile} (${code})`);
+          continue;
+        }
+        throw error;
+      }
+    }
+  } catch (error) {
+    console.error("❌ Migration bootstrap failed:", error);
+    throw error;
+  } finally {
+    if (connection) {
+      await connection.end();
+    }
   }
 }

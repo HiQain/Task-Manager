@@ -111,6 +111,12 @@ export function useAuth(): AuthContextType {
 
             await res.json();
         },
+        onSuccess: () => {
+            qc?.setQueryData(['auth', 'me'], (currentUser: User | null | undefined) => {
+                if (!currentUser) return currentUser;
+                return { ...currentUser, mustChangePassword: false };
+            });
+        },
     });
 
     return {

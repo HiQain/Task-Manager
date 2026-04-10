@@ -474,6 +474,7 @@ export function Sidebar({
   // All admin items
   const adminNavItems = [
     { label: "Overview", icon: LayoutDashboard, href: "/" },
+    { label: "Todo Lists", icon: ListTodo, href: "/todo" },
     { label: "Hiqain Board", icon: Kanban, href: "/board" },
     { label: "List View", icon: ListTodo, href: "/list" },
     { label: "Team", icon: Users, href: "/users" },
@@ -486,6 +487,7 @@ export function Sidebar({
 
   // User only sees tasks for drag & drop
   const userNavItems = [
+    { label: "Todo Lists", icon: ListTodo, href: "/todo" },
     { label: "Hiqain Board", icon: Kanban, href: "/board" },
     { label: "List View", icon: ListTodo, href: "/list" },
     { label: "Members", icon: Users, href: "/members" },
