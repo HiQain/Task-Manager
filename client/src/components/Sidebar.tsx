@@ -474,7 +474,6 @@ export function Sidebar({
   // All admin items
   const adminNavItems = [
     { label: "Overview", icon: LayoutDashboard, href: "/" },
-    { label: "Todo Lists", icon: ListTodo, href: "/todo" },
     { label: "Hiqain Board", icon: Kanban, href: "/board" },
     { label: "List View", icon: ListTodo, href: "/list" },
     { label: "Team", icon: Users, href: "/users" },
@@ -483,11 +482,11 @@ export function Sidebar({
     { label: "Notifications", icon: Bell, href: "/notifications" },
     ...(canAccessStorage ? [{ label: "Storage", icon: HardDrive, href: "/storage" }] : []),
     ...(canAccessClientCreds ? [{ label: "Client Creds", icon: KeyRound, href: "/client-creds" }] : []),
+    { label: "Todo List", icon: ListTodo, href: "/todo" },
   ];
 
   // User only sees tasks for drag & drop
   const userNavItems = [
-    { label: "Todo Lists", icon: ListTodo, href: "/todo" },
     { label: "Hiqain Board", icon: Kanban, href: "/board" },
     { label: "List View", icon: ListTodo, href: "/list" },
     { label: "Members", icon: Users, href: "/members" },
@@ -496,6 +495,7 @@ export function Sidebar({
     { label: "Notifications", icon: Bell, href: "/notifications" },
     ...(canAccessStorage ? [{ label: "Storage", icon: HardDrive, href: "/storage" }] : []),
     ...(canAccessClientCreds ? [{ label: "Client Creds", icon: KeyRound, href: "/client-creds" }] : []),
+    { label: "Todo List", icon: ListTodo, href: "/todo" },
   ];
 
   const navItems = user?.role === "admin" ? adminNavItems : userNavItems;

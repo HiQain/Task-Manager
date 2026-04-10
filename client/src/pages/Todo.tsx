@@ -7,13 +7,13 @@ import {
   useUpdateTodoItem,
 } from "@/hooks/use-todos";
 import { useAuth } from "@/hooks/use-auth";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Check, Loader2, Pencil, Plus, Trash2, UserCircle2 } from "lucide-react";
+import { Check, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 
 export default function Todo() {
   const { user } = useAuth();
@@ -119,27 +119,13 @@ export default function Todo() {
   return (
     <div className="space-y-6">
       <section className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h3 className="text-lg font-semibold">My Todo</h3>
-          <Badge variant="secondary">{totalCount}</Badge>
-        </div>
-
         <Card className="rounded-[28px] border-slate-300 shadow-sm">
           <CardHeader className="space-y-3 pb-4">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <CardTitle className="text-2xl font-semibold tracking-tight">My Todo</CardTitle>
-                  <Badge variant="secondary" className="rounded-xl px-3 py-1 text-sm font-semibold">
-                    {completedCount}/{totalCount} done
-                  </Badge>
-                </div>
-                <div className="mt-2 flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
-                  <span className="inline-flex items-center gap-1">
-                    <UserCircle2 className="h-3.5 w-3.5" />
-                    {user?.name || "You"}
-                  </span>
-                </div>
+                <Badge variant="secondary" className="rounded-xl px-3 py-1 text-sm font-semibold">
+                  {completedCount}/{totalCount} done
+                </Badge>
               </div>
             </div>
           </CardHeader>

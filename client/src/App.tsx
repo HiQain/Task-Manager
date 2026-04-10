@@ -142,7 +142,7 @@ function Layout({ children }: { children: React.ReactNode }) {
   const getPageTitle = (path: string) => {
     switch (path) {
       case "/": return user?.role === "admin" ? "Overview" : "Hiqain Board";
-      case "/todo": return "Todo Lists";
+      case "/todo": return "Todo List";
       case "/password-reset": return "Password Reset";
       case "/board": return "Hiqain Board";
       case "/list": return "All Tasks";
@@ -196,7 +196,6 @@ function Layout({ children }: { children: React.ReactNode }) {
             </Button>
             <div>
               <h1 className="text-2xl md:text-3xl font-bold text-foreground">{getPageTitle(location)}</h1>
-              <p className="text-muted-foreground mt-1 text-sm md:text-base">Manage your team's work efficiently.</p>
             </div>
           </div>
 
