@@ -117,42 +117,42 @@ export default function Todo() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <section className="space-y-4">
-        <Card className="rounded-[28px] border-slate-300 shadow-sm">
-          <CardHeader className="space-y-3 pb-4">
+        <Card className="border-border/70 shadow-sm">
+          <CardHeader className="space-y-3 p-4 pb-3 sm:p-5 sm:pb-3">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0 flex-1">
-                <Badge variant="secondary" className="rounded-xl px-3 py-1 text-sm font-semibold">
+                <Badge variant="secondary" className="rounded-full px-2.5 py-0.5 text-[11px] font-semibold">
                   {completedCount}/{totalCount} done
                 </Badge>
               </div>
             </div>
           </CardHeader>
 
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
+          <CardContent className="space-y-3 p-4 pt-0 sm:p-5 sm:pt-0">
+            <div className="space-y-2.5">
               {!primaryList || primaryList.items.length === 0 ? (
-                <div className="rounded-2xl border border-dashed p-4 text-sm text-muted-foreground">
+                <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
                   Add your first todo item below.
                 </div>
               ) : (
                 primaryList.items.map((item) => (
                   <div
                     key={item.id}
-                    className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4"
+                    className="flex items-center gap-2.5 rounded-lg border border-border bg-muted/20 px-3 py-2.5"
                   >
                     <button
                       type="button"
                       onClick={() => void handleToggleItem(item.id, !item.completed)}
-                      className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border transition ${
+                      className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition ${
                         item.completed
                           ? "border-primary bg-primary text-primary-foreground"
                           : "border-slate-300 bg-white text-slate-500"
                       }`}
                       aria-label={item.completed ? "Mark as pending" : "Mark as done"}
                     >
-                      {item.completed ? <Check className="h-4 w-4" /> : null}
+                      {item.completed ? <Check className="h-3.5 w-3.5" /> : null}
                     </button>
 
                     <div className="min-w-0 flex-1">
@@ -162,7 +162,7 @@ export default function Todo() {
                             value={editingItemContent}
                             onChange={(event) => setEditingItemContent(event.target.value)}
                             placeholder="Edit item"
-                            className="h-11 rounded-xl"
+                            className="h-9"
                             onKeyDown={(event) => {
                               if (event.key === "Enter") {
                                 event.preventDefault();
@@ -187,7 +187,7 @@ export default function Todo() {
                           </div>
                         </div>
                       ) : (
-                        <p className={item.completed ? "text-lg text-muted-foreground line-through" : "text-lg font-medium text-slate-700"}>
+                        <p className={item.completed ? "text-[13px] text-muted-foreground line-through" : "text-[13px] font-medium text-slate-700"}>
                           {item.content}
                         </p>
                       )}
@@ -232,18 +232,18 @@ export default function Todo() {
                     void handleAddItem();
                   }
                 }}
-                className="h-14 rounded-2xl text-base"
+                className="h-9 rounded-md text-sm"
               />
               <Button
                 onClick={() => void handleAddItem()}
-                className="h-14 rounded-2xl px-6 text-lg sm:min-w-32"
+                className="h-9 rounded-md px-4 text-sm sm:min-w-24"
                 disabled={createItem.isPending || createList.isPending}
               >
                 {createItem.isPending || createList.isPending ? (
-                  <Loader2 className="h-5 w-5 animate-spin" />
+                  <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   <>
-                    <Plus className="mr-2 h-5 w-5" />
+                    <Plus className="mr-1.5 h-4 w-4" />
                     Add
                   </>
                 )}

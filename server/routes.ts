@@ -2062,6 +2062,7 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Cannot send message to deleted user" });
       }
       const shouldMarkReadImmediately = isUserViewingChatWith(input.toUserId, req.user.id);
+      const shouldSuppressDirectNotification = shouldMarkReadImmediately;
       const message = await storage.createMessage({
         ...input,
         fromUserId: req.user.id,
@@ -2077,7 +2078,7 @@ export async function registerRoutes(
       });
       await pushUnreadUpdate(req.user.id);
       await pushUnreadUpdate(input.toUserId);
-      if (!shouldMarkReadImmediately) {
+      if (!shouldSuppressDirectNotification) {
         await emitNotification([input.toUserId], {
           title: "New Message",
           description: `${req.user.name} sent you a message.`,
@@ -2254,7 +2255,7 @@ export async function registerRoutes(
       const mentionRecipients = new Set<number>();
 
       mentionedIds.forEach((id) => {
-        if (assignedUserIds.includes(id)) {
+        if (assignedUserIds.includes(id) && !isUserViewingTaskGroup(id, taskId)) {
           mentionRecipients.add(id);
         }
       });

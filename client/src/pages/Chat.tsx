@@ -2,14 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ChevronDown, ChevronLeft, ChevronRight, Download, Eye, FileText, Loader2, Mic, MicOff, Paperclip, Phone, PhoneOff, Search, Send, X } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, CornerUpLeft, Download, Eye, FileText, Forward, Loader2, Mic, MicOff, Paperclip, Phone, PhoneOff, Search, Send, X } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
-import { useChatUsers, useMarkChatRead, useMarkTaskGroupRead, useMessages, useSendMessage, useSendTaskGroupMessage, useTaskGroupMessages, useTaskGroupUnreadCounts, useTaskGroups, useUnreadCounts } from "@/hooks/use-chat";
+import { useChatUsers, useMarkChatRead, useMarkTaskGroupRead, useMessages, useSendAnyMessage, useSendMessage, useSendTaskGroupMessage, useSendTaskGroupMessageToTask, useTaskGroupMessages, useTaskGroupUnreadCounts, useTaskGroups, useUnreadCounts } from "@/hooks/use-chat";
 import { useUsers } from "@/hooks/use-users";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
 import { useTasks } from "@/hooks/use-tasks";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -29,6 +29,20 @@ type ChatAttachment = {
 };
 
 type PreviewAttachment = Pick<ChatAttachment, "name" | "data" | "type">;
+
+type MessageReference = {
+  messageId?: number;
+  senderName: string;
+  text: string;
+  attachmentsCount: number;
+};
+
+type ForwardTarget = {
+  type: "user" | "task";
+  id: number;
+  label: string;
+  description: string;
+};
 
 const CHAT_ATTACHMENT_PREFIX = "__CHAT_ATTACHMENTS_V1__:";
 const PENDING_CALL_STORAGE_KEY = "pending_incoming_call_v1";
@@ -55,15 +69,25 @@ function formatAttachmentSize(bytes?: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function decodeMessagePayload(rawContent: unknown): { text: string; attachments: ChatAttachment[] } {
+function decodeMessagePayload(rawContent: unknown): {
+  text: string;
+  attachments: ChatAttachment[];
+  replyTo: MessageReference | null;
+  forwardedFrom: MessageReference | null;
+} {
   const content = typeof rawContent === "string" ? rawContent : "";
   if (!content.startsWith(CHAT_ATTACHMENT_PREFIX)) {
-    return { text: content, attachments: [] };
+    return { text: content, attachments: [], replyTo: null, forwardedFrom: null };
   }
 
   const encoded = content.slice(CHAT_ATTACHMENT_PREFIX.length);
   try {
-    const parsed = JSON.parse(encoded) as { text?: unknown; attachments?: unknown };
+    const parsed = JSON.parse(encoded) as {
+      text?: unknown;
+      attachments?: unknown;
+      replyTo?: unknown;
+      forwardedFrom?: unknown;
+    };
     const text = typeof parsed?.text === "string" ? parsed.text : "";
     const attachments = Array.isArray(parsed?.attachments)
       ? parsed.attachments
@@ -75,15 +99,56 @@ function decodeMessagePayload(rawContent: unknown): { text: string; attachments:
             && typeof (item as any).size === "number";
         })
       : [];
-    return { text, attachments };
+
+    const parseReference = (value: unknown): MessageReference | null => {
+      if (!value || typeof value !== "object") return null;
+      const senderName = typeof (value as any).senderName === "string" ? (value as any).senderName.trim() : "";
+      const textValue = typeof (value as any).text === "string" ? (value as any).text : "";
+      const attachmentsCount = Number((value as any).attachmentsCount || 0);
+      const messageIdRaw = Number((value as any).messageId);
+      if (!senderName && !textValue && attachmentsCount <= 0) return null;
+      return {
+        messageId: Number.isFinite(messageIdRaw) ? messageIdRaw : undefined,
+        senderName: senderName || "Unknown",
+        text: textValue,
+        attachmentsCount: Number.isFinite(attachmentsCount) ? attachmentsCount : 0,
+      };
+    };
+
+    return {
+      text,
+      attachments,
+      replyTo: parseReference(parsed?.replyTo),
+      forwardedFrom: parseReference(parsed?.forwardedFrom),
+    };
   } catch {
-    return { text: content, attachments: [] };
+    return { text: content, attachments: [], replyTo: null, forwardedFrom: null };
   }
 }
 
-function encodeMessagePayload(text: string, attachments: ChatAttachment[]): string {
-  if (attachments.length === 0) return text;
-  return `${CHAT_ATTACHMENT_PREFIX}${JSON.stringify({ text, attachments })}`;
+function encodeMessagePayload(
+  text: string,
+  attachments: ChatAttachment[],
+  meta?: { replyTo?: MessageReference | null; forwardedFrom?: MessageReference | null },
+): string {
+  if (attachments.length === 0 && !meta?.replyTo && !meta?.forwardedFrom) return text;
+  return `${CHAT_ATTACHMENT_PREFIX}${JSON.stringify({
+    text,
+    attachments,
+    replyTo: meta?.replyTo || undefined,
+    forwardedFrom: meta?.forwardedFrom || undefined,
+  })}`;
+}
+
+function summarizeMessageReference(reference: MessageReference) {
+  const snippet = reference.text.trim();
+  if (snippet) {
+    return snippet.length > 120 ? `${snippet.slice(0, 117)}...` : snippet;
+  }
+  if (reference.attachmentsCount > 0) {
+    return `${reference.attachmentsCount} attachment${reference.attachmentsCount > 1 ? "s" : ""}`;
+  }
+  return "Message";
 }
 
 function getMentionToken(value: string) {
@@ -452,8 +517,18 @@ export default function Chat() {
 
   const { data: messages, isLoading: isMessagesLoading } = useMessages(activeUserId);
   const sendMessage = useSendMessage(activeUserId);
+  const sendAnyMessage = useSendAnyMessage();
   const { data: taskGroupMessages, isLoading: isTaskGroupMessagesLoading } = useTaskGroupMessages(activeTaskGroupId);
   const sendTaskGroupMessage = useSendTaskGroupMessage(activeTaskGroupId);
+  const sendTaskGroupMessageToTask = useSendTaskGroupMessageToTask();
+  const [replyTarget, setReplyTarget] = useState<MessageReference | null>(null);
+  const [forwardMessage, setForwardMessage] = useState<{
+    text: string;
+    attachments: ChatAttachment[];
+    senderName: string;
+    reference: MessageReference;
+  } | null>(null);
+  const [forwardSearch, setForwardSearch] = useState("");
 
   const handleSelectTaskGroup = (taskId: number) => {
     setActiveTaskGroupId(taskId);
@@ -1024,16 +1099,38 @@ export default function Chat() {
   const displayedMessages = isGroupMode ? (taskGroupMessages || []) : (messages || []);
   const isDisplayedMessagesLoading = isGroupMode ? isTaskGroupMessagesLoading : isMessagesLoading;
   const sendPending = isGroupMode ? sendTaskGroupMessage.isPending : sendMessage.isPending;
+  const isForwardPending = sendAnyMessage.isPending || sendTaskGroupMessageToTask.isPending;
+  const displayedMessagesWithParsed = useMemo(
+    () => displayedMessages.map((msg) => ({ msg, parsed: decodeMessagePayload(msg.content) })),
+    [displayedMessages],
+  );
   const conversationAttachmentNameSet = useMemo(() => {
     const names = new Set<string>();
-    displayedMessages.forEach((msg) => {
-      const parsed = decodeMessagePayload(msg.content);
+    displayedMessagesWithParsed.forEach(({ parsed }) => {
       parsed.attachments.forEach((attachment) => {
         names.add(attachment.name.trim().toLowerCase());
       });
     });
     return names;
-  }, [displayedMessages]);
+  }, [displayedMessagesWithParsed]);
+  const forwardTargets = useMemo(() => {
+    const query = forwardSearch.trim().toLowerCase();
+    const usersList: ForwardTarget[] = teamMembers.map((member) => ({
+      type: "user",
+      id: member.id,
+      label: member.name,
+      description: member.email || "Direct message",
+    }));
+    const groupsList: ForwardTarget[] = filteredTaskGroups.map((entry) => ({
+      type: "task",
+      id: entry.task.id,
+      label: entry.task.title,
+      description: `${entry.activeParticipantIds.length} members`,
+    }));
+    const list = [...usersList, ...groupsList];
+    if (!query) return list;
+    return list.filter((entry) => `${entry.label} ${entry.description}`.toLowerCase().includes(query));
+  }, [forwardSearch, teamMembers, filteredTaskGroups]);
 
   const handleSend = async () => {
     if (sendPending) return;
@@ -1049,7 +1146,7 @@ export default function Chat() {
       return;
     }
     try {
-      const encodedContent = encodeMessagePayload(content, draftAttachments);
+      const encodedContent = encodeMessagePayload(content, draftAttachments, { replyTo: replyTarget });
       if (encodedContent.length > MAX_CHAT_MESSAGE_CHARS) {
         toast({
           title: "Message too large",
@@ -1069,6 +1166,7 @@ export default function Chat() {
       setDraftAttachments([]);
       setMentionQuery("");
       setIsMentionOpen(false);
+      setReplyTarget(null);
       stopTyping(activeUserId);
       requestAnimationFrame(() => {
         draftInputRef.current?.focus();
@@ -1097,7 +1195,65 @@ export default function Chat() {
     stopTyping(activeUserId);
     setActiveUserId(undefined);
     setActiveTaskGroupId(undefined);
+    setReplyTarget(null);
     setLocation("/chat");
+  };
+
+  const buildMessageReference = useCallback((message: any): MessageReference => {
+    const parsed = decodeMessagePayload(message.content);
+    const senderName = message.fromUserId === user?.id
+      ? "You"
+      : allKnownUsers.find((entry) => entry.id === message.fromUserId)?.name || "Unknown";
+    return {
+      messageId: message.id,
+      senderName,
+      text: parsed.text,
+      attachmentsCount: parsed.attachments.length,
+    };
+  }, [allKnownUsers, user?.id]);
+
+  const handleReplyToMessage = (message: any) => {
+    setReplyTarget(buildMessageReference(message));
+    requestAnimationFrame(() => {
+      draftInputRef.current?.focus();
+    });
+  };
+
+  const handleForwardMessage = (message: any) => {
+    const parsed = decodeMessagePayload(message.content);
+    const reference = buildMessageReference(message);
+    setForwardMessage({
+      text: parsed.text,
+      attachments: parsed.attachments,
+      senderName: reference.senderName,
+      reference,
+    });
+    setForwardSearch("");
+  };
+
+  const completeForward = async (target: ForwardTarget) => {
+    if (!forwardMessage) return;
+    try {
+      const content = encodeMessagePayload(
+        forwardMessage.text,
+        forwardMessage.attachments,
+        { forwardedFrom: forwardMessage.reference },
+      );
+      if (target.type === "user") {
+        await sendAnyMessage.mutateAsync({ toUserId: target.id, content });
+      } else {
+        await sendTaskGroupMessageToTask.mutateAsync({ taskId: target.id, content });
+      }
+      setForwardMessage(null);
+      setForwardSearch("");
+      toast({ title: "Message forwarded", description: `Sent to ${target.label}.` });
+    } catch (error) {
+      toast({
+        title: "Forward failed",
+        description: error instanceof Error ? error.message : "Unable to forward message.",
+        variant: "destructive",
+      });
+    }
   };
 
   const handleDraftChange = (value: string) => {
@@ -1486,15 +1642,39 @@ export default function Chat() {
             </div>
           ) : !showConversationPanel ? (
             <p className="text-sm text-muted-foreground">Select a user or task group to start chat.</p>
-          ) : displayedMessages.length > 0 ? (
-            displayedMessages.map((msg) => {
+          ) : displayedMessagesWithParsed.length > 0 ? (
+            displayedMessagesWithParsed.map(({ msg, parsed }) => {
               const mine = msg.fromUserId === user?.id;
               const sender = allKnownUsers.find((u) => u.id === msg.fromUserId);
-              const parsedMessage = decodeMessagePayload(msg.content);
+              const actionButtons = (
+                <div className="flex shrink-0 items-center gap-1 self-start sm:opacity-0 sm:pointer-events-none sm:transition-opacity sm:duration-150 sm:group-hover:opacity-100 sm:group-hover:pointer-events-auto sm:group-focus-within:opacity-100 sm:group-focus-within:pointer-events-auto">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 rounded-full bg-background/95 shadow-sm"
+                    onClick={() => handleReplyToMessage(msg)}
+                    aria-label="Reply to message"
+                  >
+                    <CornerUpLeft className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 rounded-full bg-background/95 shadow-sm"
+                    onClick={() => handleForwardMessage(msg)}
+                    aria-label="Forward message"
+                  >
+                    <Forward className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              );
               return (
-                <div key={msg.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
+                <div key={msg.id} className={`group flex w-full items-start gap-2 ${mine ? "justify-end" : "justify-start"}`}>
+                  {mine && actionButtons}
                   <div
-                    className={`max-w-[85%] md:max-w-[70%] rounded-2xl px-3 py-2 border ${mine
+                    className={`relative max-w-[85%] md:max-w-[70%] rounded-2xl px-3 py-2 border ${mine
                       ? "bg-primary text-primary-foreground border-primary/30"
                       : "bg-muted/40 text-foreground border-border"
                       }`}
@@ -1504,12 +1684,32 @@ export default function Chat() {
                         {sender?.name || "Unknown"}
                       </p>
                     )}
-                    {parsedMessage.text && (
-                      <p className="text-sm whitespace-pre-wrap break-words">{renderMessageText(parsedMessage.text)}</p>
+                    {parsed.forwardedFrom && (
+                      <div className="mb-2 rounded-lg border border-current/15 bg-background/60 px-2.5 py-2">
+                        <p className="text-[10px] font-semibold uppercase tracking-wide opacity-80">
+                          Forwarded From {parsed.forwardedFrom.senderName}
+                        </p>
+                        <p className="mt-1 text-xs opacity-90 break-words">
+                          {summarizeMessageReference(parsed.forwardedFrom)}
+                        </p>
+                      </div>
                     )}
-                    {parsedMessage.attachments.length > 0 && (
+                    {parsed.replyTo && (
+                      <div className="mb-2 rounded-lg border border-current/15 bg-background/60 px-2.5 py-2">
+                        <p className="text-[10px] font-semibold uppercase tracking-wide opacity-80">
+                          Reply To {parsed.replyTo.senderName}
+                        </p>
+                        <p className="mt-1 text-xs opacity-90 break-words">
+                          {summarizeMessageReference(parsed.replyTo)}
+                        </p>
+                      </div>
+                    )}
+                    {parsed.text && (
+                      <p className="text-sm whitespace-pre-wrap break-words">{renderMessageText(parsed.text)}</p>
+                    )}
+                    {parsed.attachments.length > 0 && (
                       <div className="mt-2 space-y-2">
-                        {parsedMessage.attachments.map((attachment, index) => (
+                        {parsed.attachments.map((attachment, index) => (
                           <div key={`${msg.id}-attachment-${index}`} className="rounded-lg border border-border/70 bg-background/70 p-2.5 shadow-sm">
                             {attachment.type.startsWith("image/") ? (
                               <button
@@ -1586,6 +1786,7 @@ export default function Chat() {
                       {msg.createdAt ? new Date(msg.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
                     </p>
                   </div>
+                  {!mine && actionButtons}
                 </div>
               );
             })
@@ -1654,27 +1855,51 @@ export default function Chat() {
             >
               <Paperclip className="w-4 h-4" />
             </Button>
-            <Input
-              ref={draftInputRef}
-              value={draft}
-              onChange={(e) => handleDraftChange(e.target.value)}
-              onKeyDown={(e) => {
-                if (isMentionOpen && mentionCandidates[0] && e.key === "Enter") {
-                  e.preventDefault();
-                  insertMention(getMentionLabel(mentionCandidates[0]));
-                }
-              }}
-              onPaste={(e) => {
-                const files = e.clipboardData?.files;
-                if (files && files.length > 0) {
-                  e.preventDefault();
-                  void handleAttachmentSelect(files);
-                }
-              }}
-              placeholder={showConversationPanel ? (isActiveUserDeleted ? "This user is deleted (read-only chat)" : "Type a message...") : "Select user or task group first"}
-              disabled={!showConversationPanel || isActiveUserDeleted || sendPending}
-              className="h-11"
-            />
+            <div className="relative flex-1">
+              {replyTarget && (
+                <div className="mb-2 flex items-start justify-between gap-3 rounded-md border border-border bg-background px-3 py-2">
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                      Replying to {replyTarget.senderName}
+                    </p>
+                    <p className="truncate text-xs text-foreground">
+                      {summarizeMessageReference(replyTarget)}
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 shrink-0"
+                    onClick={() => setReplyTarget(null)}
+                    aria-label="Cancel reply"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              )}
+              <Input
+                ref={draftInputRef}
+                value={draft}
+                onChange={(e) => handleDraftChange(e.target.value)}
+                onKeyDown={(e) => {
+                  if (isMentionOpen && mentionCandidates[0] && e.key === "Enter") {
+                    e.preventDefault();
+                    insertMention(getMentionLabel(mentionCandidates[0]));
+                  }
+                }}
+                onPaste={(e) => {
+                  const files = e.clipboardData?.files;
+                  if (files && files.length > 0) {
+                    e.preventDefault();
+                    void handleAttachmentSelect(files);
+                  }
+                }}
+                placeholder={showConversationPanel ? (isActiveUserDeleted ? "This user is deleted (read-only chat)" : "Type a message...") : "Select user or task group first"}
+                disabled={!showConversationPanel || isActiveUserDeleted || sendPending}
+                className="h-11"
+              />
+            </div>
             {isGroupMode && isMentionOpen && (
               <div className="absolute bottom-[calc(100%+0.5rem)] left-14 right-16 rounded-md border border-border bg-background p-2 shadow-lg">
                 <p className="mb-1 px-1 text-[11px] text-muted-foreground">Mention task participants</p>
@@ -1715,6 +1940,57 @@ export default function Chat() {
           </form>
         </div>
       </section>
+
+      <Dialog open={!!forwardMessage} onOpenChange={(open) => (!open ? (setForwardMessage(null), setForwardSearch("")) : undefined)}>
+        <DialogContent className="fixed !top-1/2 !left-1/2 w-[calc(100vw-2rem)] sm:max-w-lg !-translate-x-1/2 !-translate-y-1/2">
+          <DialogHeader>
+            <DialogTitle>Forward Message</DialogTitle>
+            <DialogDescription>Select a user or task group to forward this message.</DialogDescription>
+          </DialogHeader>
+          {forwardMessage && (
+            <div className="space-y-3">
+              <div className="rounded-lg border border-border bg-muted/20 px-3 py-2.5">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  From {forwardMessage.senderName}
+                </p>
+                <p className="mt-1 text-sm break-words">
+                  {summarizeMessageReference(forwardMessage.reference)}
+                </p>
+              </div>
+              <Input
+                value={forwardSearch}
+                onChange={(event) => setForwardSearch(event.target.value)}
+                placeholder="Search user or task group"
+                className="h-9"
+              />
+              <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+                {forwardTargets.map((target) => (
+                  <button
+                    key={`${target.type}-${target.id}`}
+                    type="button"
+                    className="flex w-full items-center justify-between gap-3 rounded-lg border border-border px-3 py-2 text-left transition-colors hover:bg-muted/40"
+                    disabled={isForwardPending}
+                    onClick={() => void completeForward(target)}
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">{target.label}</p>
+                      <p className="truncate text-xs text-muted-foreground">
+                        {target.type === "task" ? `Task Group • ${target.description}` : target.description}
+                      </p>
+                    </div>
+                    <Forward className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  </button>
+                ))}
+                {forwardTargets.length === 0 && (
+                  <p className="rounded-lg border border-dashed border-border px-3 py-4 text-sm text-muted-foreground">
+                    No destination found.
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!previewAttachment} onOpenChange={(open) => (!open ? setPreviewAttachment(null) : undefined)}>
         <DialogContent className="w-[calc(100vw-2rem)] sm:w-full sm:max-w-[760px] max-h-[88vh] overflow-y-auto fixed !top-1/2 !left-1/2 !-translate-x-1/2 !-translate-y-1/2">
