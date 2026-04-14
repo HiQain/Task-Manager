@@ -560,7 +560,7 @@ export default function ListView() {
           <select
             value={priorityFilter}
             onChange={(e) => setPriorityFilter(e.target.value)}
-            className="h-10 rounded-md border border-input bg-background px-3 text-sm w-full"
+            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
           >
             <option value="all">All priorities</option>
             <option value="high">High</option>
@@ -571,7 +571,7 @@ export default function ListView() {
           <select
             value={ownershipFilter}
             onChange={(e) => setOwnershipFilter(e.target.value)}
-            className="h-10 rounded-md border border-input bg-background px-3 text-sm w-full"
+            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
           >
             <option value="all">All relations</option>
             <option value="created_by_me">Created by me</option>
@@ -581,7 +581,7 @@ export default function ListView() {
           <select
             value={assigneeFilter}
             onChange={(e) => setAssigneeFilter(e.target.value)}
-            className="h-10 rounded-md border border-input bg-background px-3 text-sm w-full"
+            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
           >
             <option value="all">All assignees</option>
             <option value="me">Assigned to me</option>
@@ -596,7 +596,7 @@ export default function ListView() {
           <select
             value={dueFilter}
             onChange={(e) => setDueFilter(e.target.value)}
-            className="h-10 rounded-md border border-input bg-background px-3 text-sm w-full"
+            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
           >
             <option value="all">All due dates</option>
             <option value="overdue">Overdue</option>

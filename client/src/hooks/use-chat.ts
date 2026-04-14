@@ -82,6 +82,28 @@ export function useSendMessage(activeUserId?: number) {
   });
 }
 
+export function useSendAnyMessage() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (payload: { toUserId: number; content: string }) => {
+      const validated = api.chats.send.input.parse(payload);
+      const res = await fetch(api.chats.send.path, {
+        method: api.chats.send.method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(validated),
+        credentials: "include",
+      });
+      const body = await readJsonOrThrow(res, "Failed to send message");
+      return api.chats.send.responses[201].parse(body);
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: [api.chats.list.path, variables.toUserId] });
+      queryClient.invalidateQueries({ queryKey: [api.chats.unread.path] });
+    },
+  });
+}
+
 export function useMarkChatRead() {
   const queryClient = useQueryClient();
 
@@ -204,6 +226,28 @@ export function useSendTaskGroupMessage(taskId?: number) {
       if (taskId) {
         queryClient.invalidateQueries({ queryKey: ["chat", "task-group", taskId] });
       }
+      queryClient.invalidateQueries({ queryKey: [api.chats.groupsUnread.path] });
+    },
+  });
+}
+
+export function useSendTaskGroupMessageToTask() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (payload: { taskId: number; content: string }) => {
+      const validated = api.chats.groupSend.input.parse({ content: payload.content });
+      const res = await fetch(buildUrl(api.chats.groupSend.path, { taskId: payload.taskId }), {
+        method: api.chats.groupSend.method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(validated),
+        credentials: "include",
+      });
+      const body = await readJsonOrThrow(res, "Failed to send task group message");
+      return api.chats.groupSend.responses[201].parse(body);
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["chat", "task-group", variables.taskId] });
       queryClient.invalidateQueries({ queryKey: [api.chats.groupsUnread.path] });
     },
   });

@@ -87,6 +87,15 @@ export function TaskDetailDialog({ open, onOpenChange, task }: Props) {
   }
   if (assignedToIds.length === 0 && task.assignedToId) assignedToIds = [task.assignedToId];
   const assignedUsers = users?.filter((u) => assignedToIds.includes(u.id)) || [];
+  const createdByUser = users?.find((u) => u.id === task.createdById) || null;
+  const adminUsers = (users || []).filter((u) => String(u.role || "").toLowerCase() === "admin");
+  const mentionableUsers = Array.from(
+    new Map(
+      [...assignedUsers, ...(createdByUser ? [createdByUser] : []), ...adminUsers]
+        .filter((member) => member.id !== user?.id)
+        .map((member) => [member.id, member]),
+    ).values(),
+  );
   const attachments = Array.isArray((task as any).attachments)
     ? (task as any).attachments
     : (() => {
@@ -138,8 +147,7 @@ export function TaskDetailDialog({ open, onOpenChange, task }: Props) {
     return "user";
   };
 
-  const mentionCandidates = (assignedUsers || [])
-    .filter((member) => member.id !== user?.id)
+  const mentionCandidates = mentionableUsers
     .filter((member) => {
       if (!mentionQuery) return true;
       const token = mentionQuery.toLowerCase();
@@ -369,7 +377,7 @@ export function TaskDetailDialog({ open, onOpenChange, task }: Props) {
                         <div className="absolute z-20 bottom-full mb-2 w-full rounded-md border bg-background shadow-md max-h-48 overflow-y-auto">
                           {mentionCandidates.length === 0 && (
                             <div className="px-3 py-2 text-xs text-muted-foreground">
-                              No assigned users found.
+                              No users available to mention.
                             </div>
                           )}
                           {mentionCandidates.map((member) => {
