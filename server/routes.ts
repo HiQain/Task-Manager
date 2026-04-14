@@ -11,7 +11,6 @@ import webpush from "web-push";
 import session from "express-session";
 import { WebSocketServer, WebSocket } from "ws";
 import "express-session";
-import { fileURLToPath } from "node:url";
 
 declare module "express-session" {
   interface SessionData {
@@ -2442,8 +2441,30 @@ async function seedDatabase() {
 async function applyPendingMigrations() {
   let connection: mysql.Connection | null = null;
   try {
-    const currentDir = path.dirname(fileURLToPath(import.meta.url));
-    const migrationsDir = path.resolve(currentDir, "../migrations");
+    const candidateDirs = [
+      path.resolve(process.cwd(), "migrations"),
+      path.resolve(process.cwd(), "../migrations"),
+      path.resolve(__dirname, "../migrations"),
+    ];
+    let migrationsDir: string | null = null;
+
+    for (const candidate of candidateDirs) {
+      try {
+        const stats = await fs.stat(candidate);
+        if (stats.isDirectory()) {
+          migrationsDir = candidate;
+          break;
+        }
+      } catch {
+        // Try the next likely deployment path.
+      }
+    }
+
+    if (!migrationsDir) {
+      console.log("ℹ️ No migrations directory found; skipping migration bootstrap.");
+      return;
+    }
+
     const migrationFiles = (await fs.readdir(migrationsDir))
       .filter((file) => file.endsWith(".sql"))
       .sort();
