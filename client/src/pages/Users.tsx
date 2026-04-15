@@ -534,18 +534,16 @@ export default function Users() {
               <TableRow>
                 <TableHead className="min-w-[220px]">Name</TableHead>
                 <TableHead className="min-w-[220px]">Email</TableHead>
-                <TableHead className="min-w-[180px]">Designation</TableHead>
                 <TableHead className="min-w-[120px]">Role</TableHead>
-                <TableHead className="min-w-[140px]">Account</TableHead>
                 <TableHead className="min-w-[140px]">Storage</TableHead>
                 <TableHead className="min-w-[160px]">Client Creds</TableHead>
-                <TableHead className="text-right min-w-[100px]">Actions</TableHead>
+                <TableHead className="text-right min-w-[140px] pr-6">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filteredUsers.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="h-36 text-center text-muted-foreground">
+                  <TableCell colSpan={6} className="h-36 text-center text-muted-foreground">
                     {search.trim() ? "No matching team member found." : "No users found."}
                   </TableCell>
                 </TableRow>
@@ -571,7 +569,6 @@ export default function Users() {
                       </div>
                     </TableCell>
                     <TableCell className="text-muted-foreground">{member.email}</TableCell>
-                    <TableCell className="text-muted-foreground">{getDisplayDesignation(member)}</TableCell>
                     <TableCell>
                       <Badge
                         variant="outline"
@@ -580,22 +577,6 @@ export default function Users() {
                           : "text-blue-700 bg-blue-50 border-blue-100"}
                       >
                         {member.role === "admin" ? "Admin" : "Employee"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant="outline"
-                        className={member.isActive === false
-                          ? "text-rose-700 bg-rose-50 border-rose-100"
-                          : member.mustChangePassword
-                            ? "text-amber-700 bg-amber-50 border-amber-100"
-                            : "text-emerald-700 bg-emerald-50 border-emerald-100"}
-                      >
-                        {member.isActive === false
-                          ? "Deactivated"
-                          : member.mustChangePassword
-                            ? "Password Reset Required"
-                            : "Active"}
                       </Badge>
                     </TableCell>
                     <TableCell>
@@ -618,30 +599,31 @@ export default function Users() {
                         {clientCredsAllowed ? "Allowed" : "Blocked"}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-2">
+                    <TableCell className="pr-6">
+                      <div className="flex items-center justify-end gap-1.5">
                         {member.id !== user?.id && (
                           <Button
-                            variant={member.isActive === false ? "outline" : "destructive"}
-                            size="sm"
+                            variant="ghost"
+                            size="icon"
                             className={member.isActive === false
-                              ? "h-8 border-emerald-200 px-3 text-emerald-700 hover:bg-emerald-50"
-                              : "h-8 px-3"}
+                              ? "h-8 w-8 text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700"
+                              : "h-8 w-8 text-rose-600 hover:bg-rose-50 hover:text-rose-700"}
                             onClick={() => setStatusTarget({
                               id: member.id,
                               name: member.name,
                               isActive: member.isActive !== false,
                             })}
+                            title={member.isActive === false ? "Activate" : "Deactivate"}
                           >
-                            <Power className="mr-1.5 h-3.5 w-3.5" />
-                            {member.isActive === false ? "Activate" : "Deactivate"}
+                            <Power className="h-4 w-4" />
                           </Button>
                         )}
                         <Button
-                          variant="ghost"
+                          variant="outline"
                           size="icon"
-                          className="h-8 w-8 text-muted-foreground hover:text-primary"
+                          className="h-8 w-8 shrink-0 border-primary/20 text-primary hover:bg-primary/5"
                           onClick={() => openEditDialog(member)}
+                          title="Edit user"
                         >
                           <Pencil className="w-4 h-4" />
                         </Button>

@@ -441,16 +441,14 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
                       }
                     }}
                   />
-                  <div className="flex items-center gap-2">
-                    <Button type="button" variant="outline" onClick={() => fileInputRef.current?.click()} className="h-9">
-                      Add attachment
-                    </Button>
-                    <Button type="button" variant="ghost" className="h-9" onClick={() => fileInputRef.current?.click()}>
-                      Add more
-                    </Button>
-                  </div>
+                  {attachments.length === 0 && (
+                    <div className="flex items-center gap-2">
+                      <Button type="button" variant="outline" onClick={() => fileInputRef.current?.click()} className="h-9">
+                        Add attachment
+                      </Button>
+                    </div>
+                  )}
 
-                  {/* Previews */}
                   <div className="space-y-3">
                     {attachments.map((a: any, idx: number) => (
                       <div key={idx} className="w-full flex flex-col gap-2">
@@ -492,6 +490,13 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
                         />
                       </div>
                     ))}
+                    {attachments.length > 0 && (
+                      <div className="flex justify-start pt-1">
+                        <Button type="button" variant="outline" className="h-9" onClick={() => fileInputRef.current?.click()}>
+                          Add another attachment
+                        </Button>
+                      </div>
+                    )}
                   </div>
 
                 </div>

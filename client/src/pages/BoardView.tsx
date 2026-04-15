@@ -429,6 +429,11 @@ export default function BoardView() {
           if (!open) setSelectedTask(null);
         }}
         task={selectedTask}
+        onEdit={(task) => {
+          setSelectedTask(null);
+          setIsDetailDialogOpen(false);
+          handleEdit(task);
+        }}
       />
 
       <Dialog open={deleteTarget !== null} onOpenChange={(open) => (!open ? setDeleteTarget(null) : undefined)}>

@@ -3,18 +3,19 @@ import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { type Task } from "@shared/schema";
-import { Clock, User as UserIcon, CalendarClock } from "lucide-react";
+import { Clock, User as UserIcon, CalendarClock, Pencil } from "lucide-react";
 import { useUsers } from "@/hooks/use-users";
 import { useCreateTaskComment, useTaskComments } from "@/hooks/use-task-comments";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/hooks/use-auth";
 import { cn, formatTaskDescription, formatShortDate, isTaskOverdue, parseDateOnly } from "@/lib/utils";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   task?: Task | null;
+  onEdit?: (task: Task) => void;
 }
 
 function getAttachmentMeta(attachment: any, index: number) {
@@ -36,14 +37,16 @@ function getAttachmentMeta(attachment: any, index: number) {
   };
 }
 
-export function TaskDetailDialog({ open, onOpenChange, task }: Props) {
+export function TaskDetailDialog({ open, onOpenChange, task, onEdit }: Props) {
+  const taskRecord = task;
   const { data: users } = useUsers();
   const { user } = useAuth();
   const [commentText, setCommentText] = useState("");
   const [commentSearch, setCommentSearch] = useState("");
   const [mentionQuery, setMentionQuery] = useState("");
   const [isMentionOpen, setIsMentionOpen] = useState(false);
-  const taskId = task?.id ?? 0;
+  const commentInputRef = useRef<HTMLInputElement | null>(null);
+  const taskId = taskRecord?.id ?? 0;
 
   const { data: comments, isLoading: commentsLoading } = useTaskComments(taskId, open && !!taskId, 5000);
   const createComment = useCreateTaskComment(taskId);
@@ -55,7 +58,7 @@ export function TaskDetailDialog({ open, onOpenChange, task }: Props) {
       setMentionQuery("");
       setIsMentionOpen(false);
     }
-  }, [open, task?.id]);
+  }, [open, taskRecord?.id]);
 
   const filteredComments = useMemo(() => {
     if (!comments || comments.length === 0) return [];
@@ -69,9 +72,7 @@ export function TaskDetailDialog({ open, onOpenChange, task }: Props) {
     });
   }, [commentSearch, comments, users]);
 
-  if (!task) return null;
-
-  const rawAssignedToIds = (task as any).assignedToIds;
+  const rawAssignedToIds = (taskRecord as any)?.assignedToIds;
   let assignedToIds: number[] = [];
   if (Array.isArray(rawAssignedToIds)) {
     assignedToIds = rawAssignedToIds.map((id: any) => Number(id)).filter((id: number) => Number.isFinite(id));
@@ -85,9 +86,9 @@ export function TaskDetailDialog({ open, onOpenChange, task }: Props) {
       assignedToIds = [];
     }
   }
-  if (assignedToIds.length === 0 && task.assignedToId) assignedToIds = [task.assignedToId];
+  if (assignedToIds.length === 0 && taskRecord?.assignedToId) assignedToIds = [taskRecord.assignedToId];
   const assignedUsers = users?.filter((u) => assignedToIds.includes(u.id)) || [];
-  const createdByUser = users?.find((u) => u.id === task.createdById) || null;
+  const createdByUser = users?.find((u) => u.id === taskRecord?.createdById) || null;
   const adminUsers = (users || []).filter((u) => String(u.role || "").toLowerCase() === "admin");
   const mentionableUsers = Array.from(
     new Map(
@@ -96,31 +97,40 @@ export function TaskDetailDialog({ open, onOpenChange, task }: Props) {
         .map((member) => [member.id, member]),
     ).values(),
   );
-  const attachments = Array.isArray((task as any).attachments)
-    ? (task as any).attachments
+  const attachments = Array.isArray((taskRecord as any)?.attachments)
+    ? (taskRecord as any).attachments
     : (() => {
       try {
-        return JSON.parse((task as any).attachments || "[]");
+        return JSON.parse((taskRecord as any)?.attachments || "[]");
       } catch {
         return [];
       }
     })();
 
   const statusLabel =
-    task.status === "in_progress" ? "In Progress" : task.status === "done" ? "Done" : "To Do";
+    taskRecord?.status === "in_progress" ? "In Progress" : taskRecord?.status === "done" ? "Done" : "To Do";
 
   const priorityClass =
-    task.priority === "high"
+    taskRecord?.priority === "high"
       ? "bg-orange-50 text-orange-600 border-orange-200"
-      : task.priority === "low"
+      : taskRecord?.priority === "low"
         ? "bg-slate-100 text-slate-600 border-slate-200"
-      : "bg-blue-50 text-blue-600 border-blue-200";
+        : "bg-blue-50 text-blue-600 border-blue-200";
 
-  const isCreatedByMe = !!user?.id && task.createdById === user.id;
+  const isCreatedByMe = !!user?.id && taskRecord?.createdById === user.id;
   const isAssignedToMe = !!user?.id && assignedToIds.includes(user.id);
   const canComment = !!user?.id && (isCreatedByMe || isAssignedToMe || user?.role === "admin");
-  const parsedDueDate = parseDateOnly(task.dueDate as any);
-  const isOverdue = isTaskOverdue(task.status, task.dueDate as any);
+  const parsedDueDate = parseDateOnly(taskRecord?.dueDate as any);
+  const isOverdue = isTaskOverdue(taskRecord?.status, taskRecord?.dueDate as any);
+
+  useEffect(() => {
+    if (!open || !canComment) return;
+    const timeoutId = window.setTimeout(() => {
+      commentInputRef.current?.focus();
+    }, 50);
+    return () => window.clearTimeout(timeoutId);
+  }, [open, taskRecord?.id, canComment]);
+
   const handleAddComment = async () => {
     const trimmed = commentText.trim();
     if (!trimmed) return;
@@ -186,22 +196,39 @@ export function TaskDetailDialog({ open, onOpenChange, task }: Props) {
     });
   };
 
+  if (!taskRecord) return null;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="w-[calc(100vw-1.5rem)] sm:w-full sm:max-w-[1100px] max-h-[92vh] p-0 overflow-hidden border-border fixed !top-1/2 !left-1/2 !-translate-x-1/2 !-translate-y-1/2">
         <DialogHeader>
-          <div className="p-5 sm:p-6 border-b bg-muted/10">
-            <DialogTitle className="text-xl font-display">{task.title}</DialogTitle>
+          <div className="border-b bg-muted/10 p-5 pr-24 sm:p-6 sm:pr-28">
+            <DialogTitle className="min-w-0 pr-2 text-xl font-display">
+              {taskRecord.title}
+            </DialogTitle>
+            {isCreatedByMe && onEdit && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => onEdit(taskRecord)}
+                className="absolute right-10 top-1.5 shrink-0 opacity-70 transition-opacity hover:opacity-100 focus-visible:opacity-100"
+                aria-label="Edit task"
+                title="Edit task"
+              >
+                <Pencil className="h-4 w-4" />
+              </Button>
+            )}
           </div>
         </DialogHeader>
 
         <div className="p-5 sm:p-6 h-[calc(92vh-80px)] overflow-hidden">
           <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-5 min-h-0 h-full">
             <div className="space-y-4 overflow-y-auto pr-1 lg:pr-3 h-full">
-              {formatTaskDescription(task.description) && (
+              {formatTaskDescription(taskRecord.description) && (
                 <div>
                   <p className="text-sm whitespace-pre-line break-words">
-                    {formatTaskDescription(task.description)}
+                    {formatTaskDescription(taskRecord.description)}
                   </p>
                 </div>
               )}
@@ -214,7 +241,7 @@ export function TaskDetailDialog({ open, onOpenChange, task }: Props) {
                 <div className="rounded-lg border p-3 bg-muted/10">
                   <p className="text-xs text-muted-foreground mb-2">Priority</p>
                   <Badge variant="outline" className={`capitalize ${priorityClass}`}>
-                    {task.priority}
+                    {taskRecord.priority}
                   </Badge>
                 </div>
               </div>
@@ -253,30 +280,30 @@ export function TaskDetailDialog({ open, onOpenChange, task }: Props) {
                     {attachments.map((a: any, i: number) => {
                       const meta = getAttachmentMeta(a, i);
                       return (
-                      <div key={i} className="border rounded-lg p-3 bg-background">
-                        {meta.isImage ? (
-                          typeof a === "string" ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img src={a} alt={`att-${i}`} className="object-cover w-full h-24 rounded border" />
+                        <div key={i} className="border rounded-lg p-3 bg-background">
+                          {meta.isImage ? (
+                            typeof a === "string" ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={a} alt={`att-${i}`} className="object-cover w-full h-24 rounded border" />
+                            ) : (
+                              <img src={a.data} alt={a.name} className="object-cover w-full h-24 rounded border" />
+                            )
                           ) : (
-                            <img src={a.data} alt={a.name} className="object-cover w-full h-24 rounded border" />
-                          )
-                        ) : (
-                          <div className="flex items-center gap-3 rounded-md border bg-[#f8fafc] px-3 py-2">
-                            <div className="flex h-10 w-10 items-center justify-center rounded-md border bg-white text-xs font-semibold text-slate-600">
-                              {meta.extension}
+                            <div className="flex items-center gap-3 rounded-md border bg-[#f8fafc] px-3 py-2">
+                              <div className="flex h-10 w-10 items-center justify-center rounded-md border bg-white text-xs font-semibold text-slate-600">
+                                {meta.extension}
+                              </div>
+                              <a href={meta.href} download={typeof a === "string" ? undefined : meta.name} className="text-sm underline underline-offset-2 break-all">
+                                {meta.name}
+                              </a>
                             </div>
-                            <a href={meta.href} download={typeof a === "string" ? undefined : meta.name} className="text-sm underline underline-offset-2 break-all">
-                              {meta.name}
-                            </a>
-                          </div>
-                        )}
-                        {meta.reason && (
-                          <div className="mt-2 text-xs text-muted-foreground">
-                            {meta.reason}
-                          </div>
-                        )}
-                      </div>
+                          )}
+                          {meta.reason && (
+                            <div className="mt-2 text-xs text-muted-foreground">
+                              {meta.reason}
+                            </div>
+                          )}
+                        </div>
                       );
                     })}
                   </div>
@@ -286,7 +313,7 @@ export function TaskDetailDialog({ open, onOpenChange, task }: Props) {
               <div className="text-xs text-muted-foreground flex items-center gap-4 flex-wrap pt-2 border-t">
                 <div className="flex items-center gap-2">
                   <Clock className="w-3 h-3" />
-                  <span>Created: {task.createdAt ? new Date(task.createdAt).toLocaleString() : "-"}</span>
+                  <span>Created: {taskRecord.createdAt ? new Date(taskRecord.createdAt).toLocaleString() : "-"}</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <CalendarClock className="w-3 h-3" />
@@ -302,6 +329,12 @@ export function TaskDetailDialog({ open, onOpenChange, task }: Props) {
               </div>
             </div>
             <div className="lg:sticky lg:top-3 lg:self-start space-y-3 min-h-0">
+              <Input
+                value={commentSearch}
+                onChange={(e) => setCommentSearch(e.target.value)}
+                placeholder="Search comments..."
+                className="h-8 text-xs"
+              />
               <div className="rounded-lg border bg-muted/10 p-3 min-h-0">
                 <div className="flex items-center justify-between mb-2">
                   <div>
@@ -309,12 +342,6 @@ export function TaskDetailDialog({ open, onOpenChange, task }: Props) {
                     <p className="text-xs text-muted-foreground">Use @ to mention users.</p>
                   </div>
                 </div>
-                <Input
-                  value={commentSearch}
-                  onChange={(e) => setCommentSearch(e.target.value)}
-                  placeholder="Search comments..."
-                  className="h-8 text-xs mb-3"
-                />
 
                 {commentsLoading ? (
                   <p className="text-xs text-muted-foreground">Loading comments...</p>
@@ -344,6 +371,8 @@ export function TaskDetailDialog({ open, onOpenChange, task }: Props) {
                   <div className="mt-3 space-y-2 relative">
                     <div className="relative w-full">
                       <Input
+                        ref={commentInputRef}
+                        autoFocus
                         value={commentText}
                         onChange={(e) => {
                           const next = e.target.value;
@@ -419,6 +448,11 @@ export function TaskDetailDialog({ open, onOpenChange, task }: Props) {
         </div>
 
         <div className="p-4 border-t flex justify-end bg-muted/10">
+          {isCreatedByMe && onEdit && (
+            <Button variant="outline" onClick={() => onEdit(taskRecord)}>
+              Edit Task
+            </Button>
+          )}
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
             Close
           </Button>

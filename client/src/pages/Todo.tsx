@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   useCreateTodoItem,
   useCreateTodoList,
@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { Check, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 
@@ -28,6 +29,7 @@ export default function Todo() {
   const [editingItemId, setEditingItemId] = useState<number | null>(null);
   const [editingItemContent, setEditingItemContent] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; label: string } | null>(null);
+  const [selectedItemIds, setSelectedItemIds] = useState<number[]>([]);
 
   const myLists = useMemo(() => {
     const lists = data?.lists || [];
@@ -38,6 +40,12 @@ export default function Todo() {
   const primaryList = myLists[0] || null;
   const completedCount = primaryList?.items.filter((item) => item.completed).length || 0;
   const totalCount = primaryList?.items.length || 0;
+  const allItemIds = primaryList?.items.map((item) => item.id) || [];
+  const isAllSelected = allItemIds.length > 0 && allItemIds.every((id) => selectedItemIds.includes(id));
+
+  useEffect(() => {
+    setSelectedItemIds((prev) => prev.filter((id) => allItemIds.includes(id)));
+  }, [allItemIds]);
 
   const ensureMyTodoList = async () => {
     if (primaryList) return primaryList.list.id;
@@ -108,6 +116,22 @@ export default function Todo() {
     }
   };
 
+  const confirmDeleteSelected = async () => {
+    if (selectedItemIds.length === 0) return;
+
+    try {
+      await Promise.all(selectedItemIds.map((id) => deleteItem.mutateAsync(id)));
+      setSelectedItemIds([]);
+      toast({ title: "Selected items deleted" });
+    } catch (error) {
+      toast({
+        title: "Could not delete selected items",
+        description: error instanceof Error ? error.message : "Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -131,6 +155,29 @@ export default function Todo() {
           </CardHeader>
 
           <CardContent className="space-y-3 p-4 pt-0 sm:p-5 sm:pt-0">
+            {!!primaryList?.items.length && (
+              <div className="flex flex-col gap-3 rounded-lg border border-border/70 bg-muted/10 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+                <label className="flex items-center gap-2 text-sm font-medium">
+                  <Checkbox
+                    checked={isAllSelected}
+                    onCheckedChange={(checked) => {
+                      setSelectedItemIds(checked ? allItemIds : []);
+                    }}
+                  />
+                  Select all tasks
+                </label>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="sm"
+                  disabled={selectedItemIds.length === 0 || deleteItem.isPending}
+                  onClick={() => void confirmDeleteSelected()}
+                >
+                  <Trash2 className="mr-1.5 h-4 w-4" />
+                  Delete selected
+                </Button>
+              </div>
+            )}
             <div className="space-y-2.5">
               {!primaryList || primaryList.items.length === 0 ? (
                 <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
@@ -142,6 +189,17 @@ export default function Todo() {
                     key={item.id}
                     className="flex items-center gap-2.5 rounded-lg border border-border bg-muted/20 px-3 py-2.5"
                   >
+                    <Checkbox
+                      checked={selectedItemIds.includes(item.id)}
+                      onCheckedChange={(checked) => {
+                        setSelectedItemIds((prev) =>
+                          checked
+                            ? Array.from(new Set([...prev, item.id]))
+                            : prev.filter((id) => id !== item.id),
+                        );
+                      }}
+                      aria-label={`Select ${item.content}`}
+                    />
                     <button
                       type="button"
                       onClick={() => void handleToggleItem(item.id, !item.completed)}
