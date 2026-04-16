@@ -158,7 +158,7 @@ export interface IStorage {
   createClientCredProject(data: InsertClientCredProject & { createdById: number }): Promise<ClientCredProject>;
   updateClientCredProject(
     id: number,
-    data: Pick<InsertClientCredProject, "clientName" | "projectName" | "viaChannels" | "emails" | "passwords">
+    data: Pick<InsertClientCredProject, "clientName" | "projectName" | "links" | "link" | "viaChannels" | "emails" | "passwords">
   ): Promise<ClientCredProject>;
   deleteClientCredProject(id: number): Promise<void>;
   getClientCredProjectAccesses(projectId: number): Promise<ClientCredProjectAccess[]>;
@@ -265,6 +265,11 @@ function serializeStringList(values: string[]): string {
       .map((value) => String(value || "").trim())
       .filter(Boolean),
   );
+}
+
+function serializeStringSlots(values: string[]): string | null {
+  const normalized = values.map((value) => String(value || "").trim());
+  return normalized.some(Boolean) ? JSON.stringify(normalized) : null;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -912,6 +917,7 @@ export class DatabaseStorage implements IStorage {
     const insertResult = await db.insert(clientCredProjects).values({
       clientName: data.clientName,
       projectName: data.projectName,
+      link: serializeStringSlots(data.links),
       viaChannels: serializeStringList(data.viaChannels),
       emails: serializeStringList(data.emails),
       passwords: serializeStringList(data.passwords),
@@ -928,13 +934,14 @@ export class DatabaseStorage implements IStorage {
 
   async updateClientCredProject(
     id: number,
-    data: Pick<InsertClientCredProject, "clientName" | "projectName" | "viaChannels" | "emails" | "passwords">
+    data: Pick<InsertClientCredProject, "clientName" | "projectName" | "links" | "link" | "viaChannels" | "emails" | "passwords">
   ): Promise<ClientCredProject> {
     await db
       .update(clientCredProjects)
       .set({
         clientName: data.clientName,
         projectName: data.projectName,
+        link: serializeStringSlots(data.links),
         viaChannels: serializeStringList(data.viaChannels),
         emails: serializeStringList(data.emails),
         passwords: serializeStringList(data.passwords),

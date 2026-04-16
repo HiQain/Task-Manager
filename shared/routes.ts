@@ -471,6 +471,8 @@ export const api = {
               id: z.number(),
               clientName: z.string(),
               projectName: z.string(),
+              link: z.string().nullable().optional(),
+              links: z.array(z.string()).optional(),
               viaChannels: z.array(z.string()),
               emails: z.array(z.string()),
               passwords: z.array(z.string()),

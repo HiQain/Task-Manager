@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { createPortal } from "react-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -9,7 +10,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useUsers } from "@/hooks/use-users";
 import { api, buildUrl } from "@shared/routes";
 import { apiRequest } from "@/lib/queryClient";
-import { KeyRound, Loader2, MoreHorizontal, Pencil, Plus, Search, ShieldCheck, Trash2, X } from "lucide-react";
+import { ChevronDown, ExternalLink, KeyRound, Loader2, MoreHorizontal, Pencil, Plus, Search, ShieldCheck, Trash2, X } from "lucide-react";
 
 type ProjectMember = {
   userId: number;
@@ -21,6 +22,8 @@ type ClientCredProject = {
   id: number;
   clientName: string;
   projectName: string;
+  link?: string | null;
+  links?: string[];
   viaChannels: string[];
   emails: string[];
   passwords: string[];
@@ -37,6 +40,7 @@ type CredentialFormRow = {
   via: string;
   value: string;
   password: string;
+  link: string;
 };
 
 type ProjectFormState = {
@@ -55,24 +59,11 @@ type ClientGroup = {
 const emptyFormState = (): ProjectFormState => ({
   clientName: "",
   projectName: "",
-  rows: [{ via: "", value: "", password: "" }],
+  rows: [createFormRow()],
 });
 
 function sanitizeValueList(values: string[]): string[] {
   return values.map((value) => value.trim()).filter(Boolean);
-}
-
-function formatDate(value: string | Date | null | undefined): string {
-  if (!value) return "-";
-  return new Date(value).toLocaleString(undefined, {
-    month: "numeric",
-    day: "numeric",
-    year: "2-digit",
-    hour: "numeric",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: true,
-  });
 }
 
 function createFormRow(): CredentialFormRow {
@@ -80,22 +71,223 @@ function createFormRow(): CredentialFormRow {
     via: "",
     value: "",
     password: "",
+    link: "",
   };
 }
 
 function buildRowsFromProject(project: ClientCredProject): CredentialFormRow[] {
-  const maxRows = Math.max(project.viaChannels.length, project.emails.length, project.passwords.length, 1);
+  const projectLinks = Array.isArray(project.links) ? project.links : [];
+  const maxRows = Math.max(project.viaChannels.length, project.emails.length, project.passwords.length, projectLinks.length, 1);
   return Array.from({ length: maxRows }, (_, index) => {
     return {
       via: project.viaChannels[index] || "",
       value: project.emails[index] || "",
       password: project.passwords[index] || "",
+      link: projectLinks[index] || (index === 0 ? String(project.link || "").trim() : ""),
     };
   });
 }
 
 function getClientGroupKey(clientName: string): string {
   return clientName.trim().toLowerCase();
+}
+
+function getUniqueSortedValues(values: string[]): string[] {
+  return Array.from(
+    new Set(
+      values
+        .map((value) => value.trim())
+        .filter(Boolean),
+    ),
+  ).sort((a, b) => a.localeCompare(b));
+}
+
+function getProjectLinkHref(value: string | null | undefined): string | null {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return null;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) return trimmed;
+  return `https://${trimmed}`;
+}
+
+function getProjectLinkLabel(value: string | null | undefined): string {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return "-";
+  return trimmed.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").replace(/\/$/, "");
+}
+
+type SearchableDropdownInputProps = {
+  value: string;
+  onChange: (value: string) => void;
+  options: string[];
+  placeholder: string;
+  emptyMessage: string;
+};
+
+type DropdownPanelStyle = {
+  top: number;
+  left: number;
+  width: number;
+  maxHeight: number;
+};
+
+function SearchableDropdownInput({
+  value,
+  onChange,
+  options,
+  placeholder,
+  emptyMessage,
+}: SearchableDropdownInputProps) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const [panelStyle, setPanelStyle] = useState<DropdownPanelStyle | null>(null);
+
+  const normalizedOptions = useMemo(() => getUniqueSortedValues(options), [options]);
+  const filteredOptions = useMemo(() => {
+    const query = value.trim().toLowerCase();
+    if (!query) return normalizedOptions;
+    return normalizedOptions.filter((option) => option.toLowerCase().includes(query));
+  }, [normalizedOptions, value]);
+  const hasExactMatch = normalizedOptions.some((option) => option.toLowerCase() === value.trim().toLowerCase());
+
+  useEffect(() => {
+    if (!open) return;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (containerRef.current?.contains(target) || panelRef.current?.contains(target)) {
+        return;
+      }
+      setOpen(false);
+    };
+
+    const updatePanelPosition = () => {
+      const rect = inputRef.current?.getBoundingClientRect();
+      if (!rect) return;
+
+      setPanelStyle({
+        top: rect.bottom + 8,
+        left: rect.left,
+        width: rect.width,
+        maxHeight: Math.max(120, Math.min(240, window.innerHeight - rect.bottom - 16)),
+      });
+    };
+
+    updatePanelPosition();
+    const frame = requestAnimationFrame(updatePanelPosition);
+    const handleViewportChange = () => updatePanelPosition();
+
+    document.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("resize", handleViewportChange);
+    window.addEventListener("scroll", handleViewportChange, true);
+    return () => {
+      cancelAnimationFrame(frame);
+      document.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("resize", handleViewportChange);
+      window.removeEventListener("scroll", handleViewportChange, true);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) {
+      setPanelStyle(null);
+    }
+  }, [open]);
+
+  const dropdownPanel = open && panelStyle
+    ? createPortal(
+      <div
+        ref={panelRef}
+        className="overflow-hidden rounded-xl border border-border bg-background shadow-lg"
+        style={{
+          position: "fixed",
+          top: panelStyle.top,
+          left: panelStyle.left,
+          width: panelStyle.width,
+          zIndex: 260,
+        }}
+      >
+        <div className="overflow-y-auto p-1" style={{ maxHeight: panelStyle.maxHeight }}>
+          {filteredOptions.length > 0 ? (
+            filteredOptions.map((option) => (
+              <button
+                key={option}
+                type="button"
+                className={`flex w-full items-center rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-muted ${
+                  option.toLowerCase() === value.trim().toLowerCase() ? "bg-muted/70" : ""
+                }`}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  onChange(option);
+                  setOpen(false);
+                  requestAnimationFrame(() => inputRef.current?.focus());
+                }}
+              >
+                {option}
+              </button>
+            ))
+          ) : (
+            <p className="px-3 py-2 text-sm text-muted-foreground">{emptyMessage}</p>
+          )}
+        </div>
+
+        {value.trim() && !hasExactMatch && (
+          <div className="border-t px-3 py-2 text-xs text-muted-foreground">
+            Use typed value: <span className="font-medium text-foreground">{value.trim()}</span>
+          </div>
+        )}
+      </div>,
+      document.body,
+    )
+    : null;
+
+  return (
+    <div ref={containerRef} className="relative w-full">
+      <div className="relative w-full">
+        <Input
+          ref={inputRef}
+          value={value}
+          onFocus={() => setOpen(true)}
+          onChange={(e) => {
+            onChange(e.target.value);
+            if (!open) setOpen(true);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowDown") {
+              e.preventDefault();
+              setOpen(true);
+            }
+            if (e.key === "Escape") {
+              setOpen(false);
+            }
+          }}
+          autoComplete="off"
+          placeholder={placeholder}
+          className="pr-10"
+        />
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="absolute right-1 top-1/2 h-7 w-7 -translate-y-1/2 text-muted-foreground hover:bg-muted/60"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => {
+            if (open) {
+              setOpen(false);
+              return;
+            }
+            setOpen(true);
+            requestAnimationFrame(() => inputRef.current?.focus());
+          }}
+        >
+          <ChevronDown className={`h-4 w-4 transition-transform ${open ? "rotate-180" : ""}`} />
+        </Button>
+      </div>
+
+      {dropdownPanel}
+    </div>
+  );
 }
 
 export default function ClientCreds() {
@@ -133,7 +325,7 @@ export default function ClientCreds() {
     projects.forEach((project) => {
       const key = getClientGroupKey(project.clientName);
       const existing = groups.get(key);
-      const credentialCount = Math.max(project.viaChannels.length, project.emails.length, project.passwords.length, 1);
+      const credentialCount = buildRowsFromProject(project).length;
 
       if (existing) {
         existing.projects.push(project);
@@ -171,7 +363,8 @@ export default function ClientCreds() {
           return buildRowsFromProject(project).some((row) => (
             row.via.toLowerCase().includes(query) ||
             row.value.toLowerCase().includes(query) ||
-            row.password.toLowerCase().includes(query)
+            row.password.toLowerCase().includes(query) ||
+            getProjectLinkLabel(row.link).toLowerCase().includes(query)
           ));
         });
 
@@ -187,16 +380,27 @@ export default function ClientCreds() {
   }, [groupedClients, searchTerm]);
 
   const accessProject = projects.find((project) => project.id === accessProjectId) || null;
-  const existingClientNames = groupedClients.map((group) => group.clientName);
+  const existingClientNames = useMemo(
+    () => getUniqueSortedValues(groupedClients.map((group) => group.clientName)),
+    [groupedClients],
+  );
+  const projectNameOptions = useMemo(() => {
+    const selectedClientKey = getClientGroupKey(formState.clientName);
+    const selectedGroup = groupedClients.find((group) => group.key === selectedClientKey);
+    const source = selectedGroup
+      ? selectedGroup.projects.map((project) => project.projectName)
+      : projects.map((project) => project.projectName);
+    return getUniqueSortedValues(source);
+  }, [formState.clientName, groupedClients, projects]);
   const viaOptions = useMemo(() => {
-    const unique = new Set<string>(["Email", "Phone"]);
+    const unique = ["Email", "Phone"];
     projects.forEach((project) => {
       project.viaChannels.forEach((via) => {
         const normalized = via.trim();
-        if (normalized) unique.add(normalized);
+        if (normalized) unique.push(normalized);
       });
     });
-    return Array.from(unique).sort((a, b) => a.localeCompare(b));
+    return getUniqueSortedValues(unique);
   }, [projects]);
 
   const loadProjects = async () => {
@@ -269,8 +473,9 @@ export default function ClientCreds() {
         via: row.via.trim(),
         value: row.value.trim(),
         password: row.password.trim(),
+        link: row.link.trim(),
       }))
-      .filter((row) => row.via || row.value || row.password);
+      .filter((row) => row.via || row.value || row.password || row.link);
 
     const payload = {
       clientName: formState.clientName.trim(),
@@ -278,6 +483,7 @@ export default function ClientCreds() {
       viaChannels: sanitizeValueList(normalizedRows.map((row) => row.via)),
       emails: sanitizeValueList(normalizedRows.map((row) => row.value)),
       passwords: sanitizeValueList(normalizedRows.map((row) => row.password)),
+      links: normalizedRows.map((row) => row.link),
     };
 
     if (!payload.clientName || !payload.projectName) {
@@ -296,11 +502,10 @@ export default function ClientCreds() {
     try {
       if (formMode === "create") {
         const members = buildMembersPayload(manageAccessMap);
-        const res = await apiRequest(api.clientCreds.createProject.method, api.clientCreds.createProject.path, {
+        await apiRequest(api.clientCreds.createProject.method, api.clientCreds.createProject.path, {
           ...payload,
           members,
         });
-        const created = await res.json() as { id: number };
         setFormOpen(false);
         await loadProjects();
       } else if (editingProjectId) {
@@ -471,7 +676,7 @@ export default function ClientCreds() {
                 <Input
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  placeholder="Search client, project, email, via..."
+                  placeholder="Search client, project, email, via, link..."
                   className="pl-9"
                 />
               </div>
@@ -511,7 +716,6 @@ export default function ClientCreds() {
                                   Read only
                                 </span>
                               )}
-                              <p className="mt-2 text-xs text-muted-foreground">Updated {formatDate(project.updatedAt)}</p>
                             </div>
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
@@ -561,6 +765,23 @@ export default function ClientCreds() {
                                     <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Password</p>
                                     <p className="mt-1 break-all">{row.password || "-"}</p>
                                   </div>
+                                  <div>
+                                    <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Link</p>
+                                    {getProjectLinkHref(row.link) ? (
+                                      <a
+                                        href={getProjectLinkHref(row.link) || undefined}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="mt-1 inline-flex max-w-full items-center gap-1 text-primary hover:underline"
+                                        title={row.link || undefined}
+                                      >
+                                        <span className="truncate">{getProjectLinkLabel(row.link)}</span>
+                                        <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                                      </a>
+                                    ) : (
+                                      <p className="mt-1 text-sm text-muted-foreground">-</p>
+                                    )}
+                                  </div>
                                 </div>
                               </div>
                             ))}
@@ -572,7 +793,7 @@ export default function ClientCreds() {
                 </div>
 
                 <div className="hidden min-h-0 max-h-[calc(100vh-18rem)] flex-1 overflow-auto border bg-background md:block">
-                  <table className="min-w-[980px] w-full border-separate border-spacing-0 text-sm">
+                  <table className="min-w-[1080px] w-full border-separate border-spacing-0 text-sm">
                     <thead className="sticky top-0 z-10 bg-muted/30 backdrop-blur">
                       <tr>
                         <th className="border-b border-r border-border bg-muted/40 px-4 py-3 text-left font-semibold">Client</th>
@@ -580,7 +801,7 @@ export default function ClientCreds() {
                         <th className="border-b border-r border-border bg-muted/40 px-4 py-3 text-left font-semibold">Via</th>
                         <th className="border-b border-r border-border bg-muted/40 px-4 py-3 text-left font-semibold">Email / Value</th>
                         <th className="border-b border-r border-border bg-muted/40 px-4 py-3 text-left font-semibold">Password</th>
-                        <th className="w-[140px] border-b border-r border-border bg-muted/40 px-2 py-3 text-left font-semibold">Updated At</th>
+                        <th className="w-[170px] border-b border-r border-border bg-muted/40 px-3 py-3 text-left font-semibold">Link</th>
                         <th className="w-[72px] border-b border-border bg-muted/40 px-2 py-3 text-center font-semibold">Actions</th>
                       </tr>
                     </thead>
@@ -619,11 +840,22 @@ export default function ClientCreds() {
                                 {row.password || "-"}
                               </td>
 
-                              {rowIndex === 0 && (
-                                <td rowSpan={projectRowCount} className="border-b border-r border-border px-2 py-3 align-top">
-                                  <span className="whitespace-nowrap text-[11px] text-muted-foreground">{formatDate(project.updatedAt)}</span>
-                                </td>
-                              )}
+                              <td className="border-b border-r border-border px-3 py-3 align-top">
+                                {getProjectLinkHref(row.link) ? (
+                                  <a
+                                    href={getProjectLinkHref(row.link) || undefined}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="inline-flex max-w-[145px] items-center gap-1 text-xs text-primary hover:underline"
+                                    title={row.link || undefined}
+                                  >
+                                    <span className="truncate">{getProjectLinkLabel(row.link)}</span>
+                                    <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                                  </a>
+                                ) : (
+                                  <span className="text-xs text-muted-foreground">-</span>
+                                )}
+                              </td>
 
                               {rowIndex === 0 && (
                                 <td rowSpan={projectRowCount} className="border-b border-border px-2 py-3 align-top">
@@ -691,39 +923,39 @@ export default function ClientCreds() {
 
             <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
               <div className="space-y-5">
-                <div className="grid gap-4 lg:grid-cols-2 lg:items-start">
+                <div className="grid gap-4 lg:grid-cols-2 xl:items-start">
                   <div className="space-y-2">
                     <label className="text-sm font-medium">Client Name</label>
-                    <Input
-                      list="client-creds-client-options"
+                    <SearchableDropdownInput
                       value={formState.clientName}
-                      onChange={(e) => {
-                        setFormState((prev) => ({ ...prev, clientName: e.target.value }));
+                      onChange={(value) => {
+                        setFormState((prev) => ({ ...prev, clientName: value }));
                         if (formError) setFormError("");
                       }}
+                      options={existingClientNames}
                       placeholder="Type or select client name"
+                      emptyMessage="No saved clients found. Keep typing to add a new client."
                     />
-                    <datalist id="client-creds-client-options">
-                      {existingClientNames.map((clientName) => (
-                        <option key={clientName} value={clientName} />
-                      ))}
-                    </datalist>
                     <p className="text-xs text-muted-foreground">Pick an existing client from the dropdown or type a new one.</p>
                   </div>
 
                   <div className="space-y-2">
                     <label className="text-sm font-medium">Project Name</label>
-                    <Input
+                    <SearchableDropdownInput
                       value={formState.projectName}
-                      onChange={(e) => {
-                        setFormState((prev) => ({ ...prev, projectName: e.target.value }));
+                      onChange={(value) => {
+                        setFormState((prev) => ({ ...prev, projectName: value }));
                         if (formError) setFormError("");
                       }}
+                      options={projectNameOptions}
                       placeholder="Enter project name"
+                      emptyMessage="No saved project names found. Keep typing to add a new project."
                     />
-                    {formMode === "create" && (
-                      <p className="text-xs text-muted-foreground">A client can have multiple projects. This field creates the new project entry.</p>
-                    )}
+                    <p className="text-xs text-muted-foreground">
+                      {formMode === "create"
+                        ? "A client can have multiple projects. Pick an existing one or type a new project entry."
+                        : "Pick an existing project name or type a new one."}
+                    </p>
                   </div>
                 </div>
 
@@ -749,37 +981,34 @@ export default function ClientCreds() {
                     </Button>
                   </div>
 
-                  <div className="overflow-hidden rounded-lg border">
-                    <div className="hidden grid-cols-[minmax(180px,1.2fr)_minmax(180px,1.5fr)_minmax(180px,1.2fr)_56px] gap-0 border-b bg-muted/40 text-xs font-semibold uppercase tracking-wide text-muted-foreground md:grid">
+                  <div className="rounded-lg border bg-background">
+                    <div className="hidden grid-cols-[minmax(180px,1.1fr)_minmax(180px,1.35fr)_minmax(180px,1.15fr)_minmax(220px,1.25fr)_56px] gap-0 border-b bg-muted/40 text-xs font-semibold uppercase tracking-wide text-muted-foreground md:grid">
                       <div className="px-3 py-3">Via Type</div>
                       <div className="border-l px-3 py-3">Email / Value</div>
                       <div className="border-l px-3 py-3">Password</div>
+                      <div className="border-l px-3 py-3">Link</div>
                       <div className="border-l px-3 py-3 text-center"> </div>
                     </div>
 
                     <div className="max-h-[360px] overflow-y-auto">
                       {formState.rows.map((row, index) => (
-                        <div key={`via-row-${index}`} className="grid grid-cols-1 border-b last:border-b-0 md:grid-cols-[minmax(180px,1.2fr)_minmax(180px,1.5fr)_minmax(180px,1.2fr)_56px]">
+                        <div key={`via-row-${index}`} className="grid grid-cols-1 border-b last:border-b-0 md:grid-cols-[minmax(180px,1.1fr)_minmax(180px,1.35fr)_minmax(180px,1.15fr)_minmax(220px,1.25fr)_56px]">
                           <div className="border-b px-3 py-3 md:border-b-0 md:border-r">
                             <label className="mb-1 block text-xs font-medium text-muted-foreground md:hidden">Via Type</label>
-                            <Input
-                              list={`client-creds-via-options-${index}`}
+                            <SearchableDropdownInput
                               value={row.via}
-                              placeholder="Email, Gmail, Nextdoor"
-                              onChange={(e) =>
+                              placeholder="Select or type via type"
+                              options={viaOptions}
+                              emptyMessage="No saved via types found. Keep typing to add one."
+                              onChange={(value) =>
                                 setFormState((prev) => ({
                                   ...prev,
                                   rows: prev.rows.map((entry, entryIndex) =>
-                                    entryIndex === index ? { ...entry, via: e.target.value } : entry,
+                                    entryIndex === index ? { ...entry, via: value } : entry,
                                   ),
                                 }))
                               }
                             />
-                            <datalist id={`client-creds-via-options-${index}`}>
-                              {viaOptions.map((via) => (
-                                <option key={via} value={via} />
-                              ))}
-                            </datalist>
                           </div>
 
                           <div className="border-b px-3 py-3 md:border-b-0 md:border-r">
@@ -810,6 +1039,23 @@ export default function ClientCreds() {
                                   ...prev,
                                   rows: prev.rows.map((entry, entryIndex) =>
                                     entryIndex === index ? { ...entry, password: e.target.value } : entry,
+                                  ),
+                                }))
+                              }
+                            />
+                          </div>
+
+                          <div className="border-b px-3 py-3 md:border-b-0 md:border-r">
+                            <label className="mb-1 block text-xs font-medium text-muted-foreground md:hidden">Link</label>
+                            <Input
+                              type="text"
+                              value={row.link}
+                              placeholder="https://example.com"
+                              onChange={(e) =>
+                                setFormState((prev) => ({
+                                  ...prev,
+                                  rows: prev.rows.map((entry, entryIndex) =>
+                                    entryIndex === index ? { ...entry, link: e.target.value } : entry,
                                   ),
                                 }))
                               }

@@ -200,7 +200,7 @@ export function TaskDetailDialog({ open, onOpenChange, task, onEdit }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[calc(100vw-1.5rem)] sm:w-full sm:max-w-[1100px] max-h-[92vh] p-0 overflow-hidden border-border fixed !top-1/2 !left-1/2 !-translate-x-1/2 !-translate-y-1/2">
+      <DialogContent className="fixed !left-1/2 !top-1/2 flex h-[92vh] w-[calc(100vw-1.5rem)] !-translate-x-1/2 !-translate-y-1/2 flex-col overflow-hidden border-border p-0 sm:w-full sm:max-w-[1100px]">
         <DialogHeader>
           <div className="border-b bg-muted/10 p-5 pr-24 sm:p-6 sm:pr-28">
             <DialogTitle className="min-w-0 pr-2 text-xl font-display">
@@ -222,9 +222,9 @@ export function TaskDetailDialog({ open, onOpenChange, task, onEdit }: Props) {
           </div>
         </DialogHeader>
 
-        <div className="p-5 sm:p-6 h-[calc(92vh-80px)] overflow-hidden">
-          <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-5 min-h-0 h-full">
-            <div className="space-y-4 overflow-y-auto pr-1 lg:pr-3 h-full">
+        <div className="min-h-0 flex-1 overflow-y-auto p-5 sm:p-6 lg:overflow-hidden">
+          <div className="grid min-h-0 grid-cols-1 gap-5 lg:h-full lg:grid-cols-[minmax(0,1fr)_320px]">
+            <div className="space-y-4 pr-1 lg:h-full lg:min-h-0 lg:overflow-y-auto lg:pr-3">
               {formatTaskDescription(taskRecord.description) && (
                 <div>
                   <p className="text-sm whitespace-pre-line break-words">
@@ -328,14 +328,14 @@ export function TaskDetailDialog({ open, onOpenChange, task, onEdit }: Props) {
                 </div>
               </div>
             </div>
-            <div className="lg:sticky lg:top-3 lg:self-start space-y-3 min-h-0">
+            <div className="flex flex-col gap-3 lg:h-full lg:min-h-0">
               <Input
                 value={commentSearch}
                 onChange={(e) => setCommentSearch(e.target.value)}
                 placeholder="Search comments..."
                 className="h-8 text-xs"
               />
-              <div className="rounded-lg border bg-muted/10 p-3 min-h-0">
+              <div className="flex min-h-0 flex-col rounded-lg border bg-muted/10 p-3 lg:flex-1">
                 <div className="flex items-center justify-between mb-2">
                   <div>
                     <p className="text-sm font-medium">Comments</p>
@@ -343,29 +343,31 @@ export function TaskDetailDialog({ open, onOpenChange, task, onEdit }: Props) {
                   </div>
                 </div>
 
-                {commentsLoading ? (
-                  <p className="text-xs text-muted-foreground">Loading comments...</p>
-                ) : comments && comments.length > 0 ? (
-                  <div className="space-y-2 max-h-[30vh] overflow-y-auto pr-1">
-                    {filteredComments.length === 0 ? (
-                      <p className="text-xs text-muted-foreground">No matching comments.</p>
-                    ) : filteredComments.map((comment) => {
-                      const author = users?.find((u) => u.id === comment.userId);
-                      return (
-                        <div key={comment.id} className="rounded-md border border-border/60 p-3 bg-background">
-                          <p className="text-[11px] font-medium text-foreground">
-                            {author?.name || "User"}
-                          </p>
-                          <p className="text-[12px] text-muted-foreground break-words">
-                            {renderCommentText(comment.content)}
-                          </p>
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <p className="text-xs text-muted-foreground">No comments yet.</p>
-                )}
+                <div className="min-h-0 flex-1">
+                  {commentsLoading ? (
+                    <p className="text-xs text-muted-foreground">Loading comments...</p>
+                  ) : comments && comments.length > 0 ? (
+                    <div className="h-full space-y-2 overflow-y-auto pr-1">
+                      {filteredComments.length === 0 ? (
+                        <p className="text-xs text-muted-foreground">No matching comments.</p>
+                      ) : filteredComments.map((comment) => {
+                        const author = users?.find((u) => u.id === comment.userId);
+                        return (
+                          <div key={comment.id} className="rounded-md border border-border/60 p-3 bg-background">
+                            <p className="text-[11px] font-medium text-foreground">
+                              {author?.name || "User"}
+                            </p>
+                            <p className="text-[12px] text-muted-foreground break-words">
+                              {renderCommentText(comment.content)}
+                            </p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">No comments yet.</p>
+                  )}
+                </div>
 
                 {canComment ? (
                   <div className="mt-3 space-y-2 relative">

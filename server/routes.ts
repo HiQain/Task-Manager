@@ -2,6 +2,7 @@ import type { Express, Request } from "express";
 import type { Server } from "http";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import mysql from "mysql2/promise";
 import { storage } from "./storage";
 import { api } from "@shared/routes";
@@ -20,6 +21,7 @@ declare module "express-session" {
 
 const activeSessionByUserId = new Map<number, string>();
 const pendingCallsByUserId = new Map<number, { fromUserId: number; signal: any; createdAt: number }>();
+const routesDir = path.dirname(fileURLToPath(import.meta.url));
 
 declare global {
   namespace Express {
@@ -169,6 +171,24 @@ function parseStringList(value: unknown): string[] {
         .split(",")
         .map((entry) => entry.trim())
         .filter(Boolean);
+    }
+  }
+  return [];
+}
+
+function parseStringSlots(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map((entry) => String(entry || "").trim());
+  }
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed)) {
+        return parsed.map((entry) => String(entry || "").trim());
+      }
+    } catch {
+      const trimmed = value.trim();
+      return trimmed ? [trimmed] : [];
     }
   }
   return [];
@@ -1495,13 +1515,22 @@ export async function registerRoutes(
           })
           .filter((value): value is { userId: number; name: string; access: "view" | "edit" } => !!value);
 
+        const viaChannels = parseStringList(project.viaChannels);
+        const emails = parseStringList(project.emails);
+        const passwords = parseStringList(project.passwords);
+        const rawLinks = parseStringSlots(project.link);
+        const rowCount = Math.max(viaChannels.length, emails.length, passwords.length, rawLinks.length, 1);
+        const links = Array.from({ length: rowCount }, (_, index) => rawLinks[index] || "");
+
         return {
           id: project.id,
           clientName: project.clientName,
           projectName: project.projectName,
-          viaChannels: parseStringList(project.viaChannels),
-          emails: parseStringList(project.emails),
-          passwords: parseStringList(project.passwords),
+          link: links.find((entry) => entry) || null,
+          links,
+          viaChannels,
+          emails,
+          passwords,
           createdAt: project.createdAt,
           updatedAt: project.updatedAt,
           canEdit,
@@ -1529,6 +1558,8 @@ export async function registerRoutes(
       const project = await storage.createClientCredProject({
         clientName: input.clientName,
         projectName: input.projectName,
+        links: input.links,
+        link: input.link,
         viaChannels: input.viaChannels,
         emails: input.emails,
         passwords: input.passwords,
@@ -2445,7 +2476,7 @@ async function applyPendingMigrations() {
     const candidateDirs = [
       path.resolve(process.cwd(), "migrations"),
       path.resolve(process.cwd(), "../migrations"),
-      path.resolve(__dirname, "../migrations"),
+      path.resolve(routesDir, "../migrations"),
     ];
     let migrationsDir: string | null = null;
 

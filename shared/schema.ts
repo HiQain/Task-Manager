@@ -175,6 +175,7 @@ export const clientCredProjects = mysqlTable("client_cred_projects", {
   id: int("id").autoincrement().primaryKey(),
   clientName: varchar("client_name", { length: 255 }).notNull(),
   projectName: varchar("project_name", { length: 255 }).notNull(),
+  link: text("link"),
   viaChannels: longtext("via_channels").notNull(),
   emails: longtext("emails").notNull(),
   passwords: longtext("passwords").notNull(),
@@ -357,6 +358,8 @@ export const insertClientCredProjectSchema = z.object({
   viaChannels: clientCredListFieldSchema,
   emails: clientCredListFieldSchema,
   passwords: clientCredListFieldSchema,
+  links: z.array(z.string().trim().max(2048, "Link is too long")).min(1, "At least one link slot is required"),
+  link: z.string().trim().max(2048, "Link is too long").optional(),
   members: z
     .array(
       z.object({

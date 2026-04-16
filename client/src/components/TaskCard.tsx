@@ -127,7 +127,7 @@ export function TaskCard({ task, index, canEdit, canMove, onEdit, onDelete, onVi
               snapshot.isDragging && "shadow-xl ring-2 ring-primary/20 rotate-2",
             )}
           >
-            <CardContent className="p-4">
+            <CardContent className="flex h-full flex-col p-4">
               <div className="flex justify-between items-start mb-2">
                 <div className="flex items-center gap-2 flex-wrap">
                   <Badge variant="outline" className={`capitalize font-medium ${priorityColors[task.priority as keyof typeof priorityColors]}`}>
@@ -188,16 +188,20 @@ export function TaskCard({ task, index, canEdit, canMove, onEdit, onDelete, onVi
 
               <h4 className="font-semibold text-sm mb-1 line-clamp-2">{task.title}</h4>
               {relationLabel && (
-                <Badge variant="outline" className={`mb-2 text-[10px] font-medium ${relationClass}`}>
-                  {relationLabel}
+                <Badge variant="outline" className={`mb-2 self-start w-fit max-w-[210px] overflow-hidden ${relationClass}`}>
+                  <span className="block truncate text-[10px] font-medium" title={relationLabel}>
+                    {relationLabel}
+                  </span>
                 </Badge>
               )}
               {adminAssignmentText && (
                 <Badge
                   variant="outline"
-                  className="mb-2 text-[10px] font-medium bg-sky-50 text-sky-700 border-sky-200"
+                  className="mb-2 self-start w-fit max-w-[210px] overflow-hidden bg-sky-50 text-sky-700 border-sky-200"
                 >
-                  {adminAssignmentText}
+                  <span className="block truncate text-[10px] font-medium" title={adminAssignmentText}>
+                    {adminAssignmentText}
+                  </span>
                 </Badge>
               )}
               {formatTaskDescription(task.description) && (
@@ -220,35 +224,35 @@ export function TaskCard({ task, index, canEdit, canMove, onEdit, onDelete, onVi
                     {attachments.slice(0, 4).map((a: any, i: number) => {
                       const meta = getAttachmentMeta(a, i);
                       return (
-                      <div key={i} className="w-12 h-12 border rounded overflow-hidden bg-white flex items-center justify-center">
-                        {meta.isImage ? (
-                          typeof a === 'string' ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img src={a} alt={`attachment-${i}`} className="object-cover w-full h-full" />
+                        <div key={i} className="w-12 h-12 border rounded overflow-hidden bg-white flex items-center justify-center">
+                          {meta.isImage ? (
+                            typeof a === 'string' ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={a} alt={`attachment-${i}`} className="object-cover w-full h-full" />
+                            ) : (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={a.data} alt={a.name} className="object-cover w-full h-full" />
+                            )
                           ) : (
-                          // eslint-disable-next-line @next/next/no-img-element
-                            <img src={a.data} alt={a.name} className="object-cover w-full h-full" />
-                          )
-                        ) : (
-                          <a
-                            href={meta.href}
-                            download={typeof a === "string" ? undefined : meta.name}
-                            className="flex h-full w-full items-center justify-center p-1 text-[10px] font-semibold text-slate-600"
-                            title={meta.name}
-                          >
-                            {meta.extension}
-                          </a>
-                        )}
-                      </div>
+                            <a
+                              href={meta.href}
+                              download={typeof a === "string" ? undefined : meta.name}
+                              className="flex h-full w-full items-center justify-center p-1 text-[10px] font-semibold text-slate-600"
+                              title={meta.name}
+                            >
+                              {meta.extension}
+                            </a>
+                          )}
+                        </div>
                       );
                     })}
                   </div>
                 );
               })()}
 
-              <div className="flex items-center text-xs text-muted-foreground pt-3 border-t border-border/50 mt-auto">
+              <div className="mt-auto flex items-center gap-2 border-t border-border/50 pt-3 text-xs text-muted-foreground">
                 {assignedUsers.length > 0 ? (
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex min-w-0 flex-1 items-center gap-1.5">
                     <div className="flex -space-x-1">
                       {assignedUsers.slice(0, 2).map((assignedUser) => (
                         <Avatar key={assignedUser.id} className="h-5 w-5 border border-primary/10">
@@ -258,7 +262,7 @@ export function TaskCard({ task, index, canEdit, canMove, onEdit, onDelete, onVi
                         </Avatar>
                       ))}
                     </div>
-                    <span className="truncate max-w-[110px]">
+                    <span className="truncate max-w-full">
                       {assignedUsers[0].name}
                       {assignedUsers.length > 1 ? ` +${assignedUsers.length - 1}` : ""}
                     </span>
@@ -269,7 +273,7 @@ export function TaskCard({ task, index, canEdit, canMove, onEdit, onDelete, onVi
                     <span>Unassigned</span>
                   </div>
                 )}
-                <div className="ml-auto flex items-center gap-2">
+                <div className="ml-auto flex shrink-0 items-center gap-2">
                   <div className={cn("flex items-center", isOverdue && "text-red-700 font-medium")}>
                     <Clock className="w-3 h-3 mr-1" />
                     <span>{formatDueDate(task.dueDate as any)}</span>
