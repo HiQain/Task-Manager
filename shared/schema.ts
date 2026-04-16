@@ -250,10 +250,12 @@ export const insertTaskSchema = z.object({
   attachments: z
     .array(
       z.object({
+        id: z.string().optional(),
         name: z.string(),
         data: z.string(),
         type: z.string(),
         reason: z.string().optional(),
+        inline: z.boolean().optional(),
       }),
     )
     .optional(),

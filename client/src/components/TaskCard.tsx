@@ -12,6 +12,7 @@ import {
 import { useUsers } from "@/hooks/use-users";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useAuth } from "@/hooks/use-auth";
+import { getNonInlineTaskAttachments } from "@/lib/task-description";
 import { cn, formatTaskDescription, formatShortDate, isTaskOverdue, parseDateOnly } from "@/lib/utils";
 
 interface TaskCardProps {
@@ -212,12 +213,7 @@ export function TaskCard({ task, index, canEdit, canMove, onEdit, onDelete, onVi
 
               {/* Attachments preview */}
               {(() => {
-                const raw = (task as any).attachments;
-                let attachments: any[] = [];
-                if (Array.isArray(raw)) attachments = raw;
-                else if (typeof raw === 'string') {
-                  try { attachments = JSON.parse(raw || '[]'); } catch { attachments = []; }
-                }
+                const attachments = getNonInlineTaskAttachments((task as any).attachments);
                 if (!attachments || attachments.length === 0) return null;
                 return (
                   <div className="flex gap-2 mb-3">

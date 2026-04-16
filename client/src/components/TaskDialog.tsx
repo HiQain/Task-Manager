@@ -16,6 +16,7 @@ import { Loader2, User as UserIcon, CalendarDays, X } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useEnsureTaskGroup } from "@/hooks/use-chat";
 import { RichTextEditor } from "@/components/RichTextEditor";
+import { normalizeTaskAttachments } from "@/lib/task-description";
 import { formatShortDate, parseDateOnly } from "@/lib/utils";
 
 interface TaskDialogProps {
@@ -92,7 +93,10 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
     },
   });
 
-  const attachments = form.watch("attachments") || [];
+  const attachments = normalizeTaskAttachments(form.watch("attachments"));
+  const visibleAttachments = attachments
+    .map((attachment, index) => ({ attachment, index }))
+    .filter(({ attachment }) => !attachment.inline);
   const dueDate = form.watch("dueDate");
   const assignedToIds = form.watch("assignedToIds") || [];
   const selectedDueDate = parseInputDateValue(dueDate ?? undefined);
@@ -121,19 +125,6 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
       shouldDirty: true,
       shouldTouch: true,
     });
-  };
-
-  const parseAttachments = (raw: unknown): any[] => {
-    if (Array.isArray(raw)) return raw;
-    if (typeof raw === "string") {
-      try {
-        const parsed = JSON.parse(raw);
-        return Array.isArray(parsed) ? parsed : [];
-      } catch {
-        return [];
-      }
-    }
-    return [];
   };
 
   const parseAssignedToIds = (rawIds: unknown, rawId: unknown): number[] => {
@@ -191,12 +182,7 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
     if (task) {
       const parsedDueDate = parseDateOnly(task.dueDate as any);
       const formattedDueDate = parsedDueDate ? toInputDateValue(parsedDueDate) : undefined;
-      const normalizedAttachments = parseAttachments(task.attachments).map((a: any) => ({
-        ...(typeof a === "string"
-          ? { name: a, data: a, type: a.startsWith("data:image") ? "image/*" : "file" }
-          : a),
-        reason: (a as any)?.reason || "",
-      }));
+      const normalizedAttachments = normalizeTaskAttachments(task.attachments);
       form.reset({
         title: task.title,
         description: task.description || "",
@@ -300,10 +286,20 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
                         <RichTextEditor
                           value={field.value || ""}
                           onChange={(val) => field.onChange(val)}
+                          attachments={attachments}
+                          onAttachmentsChange={(nextAttachments) =>
+                            form.setValue("attachments" as any, nextAttachments as any, {
+                              shouldDirty: true,
+                              shouldTouch: true,
+                            })
+                          }
                           placeholder="Add details about this task..."
                           minHeight="140px"
                         />
                       </FormControl>
+                      <p className="text-xs text-muted-foreground">
+                        Paste screenshots directly here and they will stay inline with the description.
+                      </p>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -441,7 +437,7 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
                       }
                     }}
                   />
-                  {attachments.length === 0 && (
+                  {visibleAttachments.length === 0 && (
                     <div className="flex items-center gap-2">
                       <Button type="button" variant="outline" onClick={() => fileInputRef.current?.click()} className="h-9">
                         Add attachment
@@ -450,8 +446,8 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
                   )}
 
                   <div className="space-y-3">
-                    {attachments.map((a: any, idx: number) => (
-                      <div key={idx} className="w-full flex flex-col gap-2">
+                    {visibleAttachments.map(({ attachment: a, index: originalIndex }) => (
+                      <div key={a.id || `${a.name}-${originalIndex}`} className="w-full flex flex-col gap-2">
                         <div className="flex items-start justify-between gap-3">
                           <div className="w-24 h-24 border rounded overflow-hidden flex items-center justify-center bg-white shrink-0">
                             {a.type.startsWith("image/") ? (
@@ -466,7 +462,7 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
                             type="button"
                             variant="ghost"
                             size="sm"
-                            onClick={() => removeAttachment(idx)}
+                            onClick={() => removeAttachment(originalIndex)}
                             className="h-8 px-2 text-destructive hover:text-destructive"
                           >
                             <X className="h-4 w-4 mr-1" />
@@ -479,7 +475,7 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
                           value={a.reason || ""}
                           onChange={(e) => {
                             const updated = [...attachments];
-                            updated[idx] = { ...updated[idx], reason: e.target.value };
+                            updated[originalIndex] = { ...updated[originalIndex], reason: e.target.value };
 
                             form.setValue("attachments" as any, updated as any, {
                               shouldDirty: true,
@@ -490,7 +486,7 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
                         />
                       </div>
                     ))}
-                    {attachments.length > 0 && (
+                    {visibleAttachments.length > 0 && (
                       <div className="flex justify-start pt-1">
                         <Button type="button" variant="outline" className="h-9" onClick={() => fileInputRef.current?.click()}>
                           Add another attachment

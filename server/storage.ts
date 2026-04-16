@@ -481,7 +481,7 @@ export class DatabaseStorage implements IStorage {
       toUpdate.assignedToIds = JSON.stringify(assignedToIds);
       toUpdate.assignedToId = assignedToIds.length > 0 ? assignedToIds[0] : null;
     }
-    if ((updates as any).attachments) {
+    if ((updates as any).attachments !== undefined) {
       toUpdate.attachments = JSON.stringify((updates as any).attachments);
     }
     if ((updates as any).dueDate !== undefined) {

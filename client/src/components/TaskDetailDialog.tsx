@@ -3,12 +3,14 @@ import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { type Task } from "@shared/schema";
-import { Clock, User as UserIcon, CalendarClock, Pencil } from "lucide-react";
+import { Clock, User as UserIcon, CalendarClock } from "lucide-react";
 import { useUsers } from "@/hooks/use-users";
 import { useCreateTaskComment, useTaskComments } from "@/hooks/use-task-comments";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/hooks/use-auth";
-import { cn, formatTaskDescription, formatShortDate, isTaskOverdue, parseDateOnly } from "@/lib/utils";
+import { TaskDescriptionContent } from "@/components/TaskDescriptionContent";
+import { getNonInlineTaskAttachments, normalizeTaskAttachments } from "@/lib/task-description";
+import { cn, formatShortDate, isTaskOverdue, parseDateOnly } from "@/lib/utils";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 interface Props {
@@ -97,15 +99,8 @@ export function TaskDetailDialog({ open, onOpenChange, task, onEdit }: Props) {
         .map((member) => [member.id, member]),
     ).values(),
   );
-  const attachments = Array.isArray((taskRecord as any)?.attachments)
-    ? (taskRecord as any).attachments
-    : (() => {
-      try {
-        return JSON.parse((taskRecord as any)?.attachments || "[]");
-      } catch {
-        return [];
-      }
-    })();
+  const descriptionAttachments = normalizeTaskAttachments((taskRecord as any)?.attachments);
+  const attachments = getNonInlineTaskAttachments((taskRecord as any)?.attachments);
 
   const statusLabel =
     taskRecord?.status === "in_progress" ? "In Progress" : taskRecord?.status === "done" ? "Done" : "To Do";
@@ -202,36 +197,17 @@ export function TaskDetailDialog({ open, onOpenChange, task, onEdit }: Props) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="fixed !left-1/2 !top-1/2 flex h-[92vh] w-[calc(100vw-1.5rem)] !-translate-x-1/2 !-translate-y-1/2 flex-col overflow-hidden border-border p-0 sm:w-full sm:max-w-[1100px]">
         <DialogHeader>
-          <div className="border-b bg-muted/10 p-5 pr-24 sm:p-6 sm:pr-28">
+          <div className="border-b bg-muted/10 p-5 pr-16 sm:p-6 sm:pr-20">
             <DialogTitle className="min-w-0 pr-2 text-xl font-display">
               {taskRecord.title}
             </DialogTitle>
-            {isCreatedByMe && onEdit && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                onClick={() => onEdit(taskRecord)}
-                className="absolute right-10 top-1.5 shrink-0 opacity-70 transition-opacity hover:opacity-100 focus-visible:opacity-100"
-                aria-label="Edit task"
-                title="Edit task"
-              >
-                <Pencil className="h-4 w-4" />
-              </Button>
-            )}
           </div>
         </DialogHeader>
 
         <div className="min-h-0 flex-1 overflow-y-auto p-5 sm:p-6 lg:overflow-hidden">
           <div className="grid min-h-0 grid-cols-1 gap-5 lg:h-full lg:grid-cols-[minmax(0,1fr)_320px]">
             <div className="space-y-4 pr-1 lg:h-full lg:min-h-0 lg:overflow-y-auto lg:pr-3">
-              {formatTaskDescription(taskRecord.description) && (
-                <div>
-                  <p className="text-sm whitespace-pre-line break-words">
-                    {formatTaskDescription(taskRecord.description)}
-                  </p>
-                </div>
-              )}
+              <TaskDescriptionContent value={taskRecord.description} attachments={descriptionAttachments} />
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="rounded-lg border p-3 bg-muted/10">
@@ -310,23 +286,6 @@ export function TaskDetailDialog({ open, onOpenChange, task, onEdit }: Props) {
                 </div>
               )}
 
-              <div className="text-xs text-muted-foreground flex items-center gap-4 flex-wrap pt-2 border-t">
-                <div className="flex items-center gap-2">
-                  <Clock className="w-3 h-3" />
-                  <span>Created: {taskRecord.createdAt ? new Date(taskRecord.createdAt).toLocaleString() : "-"}</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <CalendarClock className="w-3 h-3" />
-                  <span className={cn(isOverdue && "text-destructive font-medium")}>
-                    Due: {parsedDueDate ? formatShortDate(parsedDueDate) : "Not set"}
-                  </span>
-                  {isOverdue && (
-                    <Badge variant="outline" className="text-red-700 border-red-200 bg-red-100">
-                      Overdue
-                    </Badge>
-                  )}
-                </div>
-              </div>
             </div>
             <div className="flex flex-col gap-3 lg:h-full lg:min-h-0">
               <Input
@@ -449,15 +408,37 @@ export function TaskDetailDialog({ open, onOpenChange, task, onEdit }: Props) {
           </div>
         </div>
 
-        <div className="p-4 border-t flex justify-end bg-muted/10">
-          {isCreatedByMe && onEdit && (
-            <Button variant="outline" onClick={() => onEdit(taskRecord)}>
-              Edit Task
-            </Button>
-          )}
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
-            Close
-          </Button>
+        <div className="border-t bg-muted/10 p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
+              <div className="flex items-center gap-2">
+                <Clock className="w-3 h-3" />
+                <span>Created: {taskRecord.createdAt ? new Date(taskRecord.createdAt).toLocaleString() : "-"}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <CalendarClock className="w-3 h-3" />
+                <span className={cn(isOverdue && "text-destructive font-medium")}>
+                  Due: {parsedDueDate ? formatShortDate(parsedDueDate) : "Not set"}
+                </span>
+                {isOverdue && (
+                  <Badge variant="outline" className="text-red-700 border-red-200 bg-red-100">
+                    Overdue
+                  </Badge>
+                )}
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2">
+              {isCreatedByMe && onEdit && (
+                <Button variant="outline" onClick={() => onEdit(taskRecord)}>
+                  Edit Task
+                </Button>
+              )}
+              <Button variant="ghost" onClick={() => onOpenChange(false)}>
+                Close
+              </Button>
+            </div>
+          </div>
         </div>
       </DialogContent>
     </Dialog>
