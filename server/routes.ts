@@ -2014,6 +2014,46 @@ export async function registerRoutes(
     }
   });
 
+  app.patch(api.tasks.comments.update.path, async (req, res) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const taskId = Number(req.params.id);
+    const commentId = Number(req.params.commentId);
+    if (!Number.isFinite(taskId) || !Number.isFinite(commentId)) {
+      return res.status(400).json({ message: "Invalid request" });
+    }
+    const task = await storage.getTask(taskId);
+    if (!task) {
+      return res.status(404).json({ message: "Task not found" });
+    }
+    if (!canUserAccessTask(req.user, task) && !isAdminUser(req.user)) {
+      return res.status(403).json({ message: "Not authorized to edit comments" });
+    }
+
+    const existingComment = await storage.getTaskComment(commentId);
+    if (!existingComment || existingComment.taskId !== taskId) {
+      return res.status(404).json({ message: "Comment not found" });
+    }
+    if (existingComment.userId !== req.user.id && !isAdminUser(req.user)) {
+      return res.status(403).json({ message: "Only the comment author can edit this comment" });
+    }
+
+    try {
+      const input = api.tasks.comments.update.input.parse(req.body);
+      const updatedComment = await storage.updateTaskComment(commentId, input.content);
+      res.json(updatedComment);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({
+          message: err.errors[0].message,
+          field: err.errors[0].path.join("."),
+        });
+      }
+      throw err;
+    }
+  });
+
   // Chat API
   app.get(api.chats.users.path, async (req, res) => {
     if (!req.user) {

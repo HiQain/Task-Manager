@@ -2,10 +2,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
 import { type Task } from "@shared/schema";
-import { Clock, User as UserIcon, CalendarClock } from "lucide-react";
+import { CalendarClock, Clock, Loader2, Pencil, User as UserIcon, X } from "lucide-react";
 import { useUsers } from "@/hooks/use-users";
-import { useCreateTaskComment, useTaskComments } from "@/hooks/use-task-comments";
+import { useCreateTaskComment, useTaskComments, useUpdateTaskComment } from "@/hooks/use-task-comments";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/hooks/use-auth";
 import { TaskDescriptionContent } from "@/components/TaskDescriptionContent";
@@ -43,8 +44,15 @@ export function TaskDetailDialog({ open, onOpenChange, task, onEdit }: Props) {
   const taskRecord = task;
   const { data: users } = useUsers();
   const { user } = useAuth();
+  const [previewImage, setPreviewImage] = useState<{
+    src: string;
+    alt: string;
+    caption?: string;
+  } | null>(null);
   const [commentText, setCommentText] = useState("");
   const [commentSearch, setCommentSearch] = useState("");
+  const [editingCommentId, setEditingCommentId] = useState<number | null>(null);
+  const [editingCommentText, setEditingCommentText] = useState("");
   const [mentionQuery, setMentionQuery] = useState("");
   const [isMentionOpen, setIsMentionOpen] = useState(false);
   const commentInputRef = useRef<HTMLInputElement | null>(null);
@@ -52,11 +60,15 @@ export function TaskDetailDialog({ open, onOpenChange, task, onEdit }: Props) {
 
   const { data: comments, isLoading: commentsLoading } = useTaskComments(taskId, open && !!taskId, 5000);
   const createComment = useCreateTaskComment(taskId);
+  const updateComment = useUpdateTaskComment(taskId);
 
   useEffect(() => {
     if (!open) {
+      setPreviewImage(null);
       setCommentText("");
       setCommentSearch("");
+      setEditingCommentId(null);
+      setEditingCommentText("");
       setMentionQuery("");
       setIsMentionOpen(false);
     }
@@ -137,6 +149,29 @@ export function TaskDetailDialog({ open, onOpenChange, task, onEdit }: Props) {
     }
   };
 
+  const handleCancelEditComment = () => {
+    setEditingCommentId(null);
+    setEditingCommentText("");
+  };
+
+  const handleStartEditComment = (commentId: number, content: string) => {
+    setEditingCommentId(commentId);
+    setEditingCommentText(content);
+    setIsMentionOpen(false);
+    setMentionQuery("");
+  };
+
+  const handleUpdateComment = async () => {
+    const trimmed = editingCommentText.trim();
+    if (!editingCommentId || !trimmed) return;
+    try {
+      await updateComment.mutateAsync({ commentId: editingCommentId, content: trimmed });
+      handleCancelEditComment();
+    } catch {
+      // handled by toast elsewhere if needed
+    }
+  };
+
   const getMentionToken = (value: string) => {
     const match = value.match(/(?:^|\s)@([a-z0-9._-]*)$/i);
     return match ? match[1] : null;
@@ -194,8 +229,9 @@ export function TaskDetailDialog({ open, onOpenChange, task, onEdit }: Props) {
   if (!taskRecord) return null;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="fixed !left-1/2 !top-1/2 flex h-[92vh] w-[calc(100vw-1.5rem)] !-translate-x-1/2 !-translate-y-1/2 flex-col overflow-hidden border-border p-0 sm:w-full sm:max-w-[1100px]">
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="fixed !left-1/2 !top-1/2 flex h-[92vh] w-[calc(100vw-1.5rem)] !-translate-x-1/2 !-translate-y-1/2 flex-col overflow-hidden border-border p-0 sm:w-full sm:max-w-[1100px]">
         <DialogHeader>
           <div className="border-b bg-muted/10 p-5 pr-16 sm:p-6 sm:pr-20">
             <DialogTitle className="min-w-0 pr-2 text-xl font-display">
@@ -207,7 +243,11 @@ export function TaskDetailDialog({ open, onOpenChange, task, onEdit }: Props) {
         <div className="min-h-0 flex-1 overflow-y-auto p-5 sm:p-6 lg:overflow-hidden">
           <div className="grid min-h-0 grid-cols-1 gap-5 lg:h-full lg:grid-cols-[minmax(0,1fr)_320px]">
             <div className="space-y-4 pr-1 lg:h-full lg:min-h-0 lg:overflow-y-auto lg:pr-3">
-              <TaskDescriptionContent value={taskRecord.description} attachments={descriptionAttachments} />
+              <TaskDescriptionContent
+                value={taskRecord.description}
+                attachments={descriptionAttachments}
+                onImageClick={(image) => setPreviewImage(image)}
+              />
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="rounded-lg border p-3 bg-muted/10">
@@ -258,12 +298,24 @@ export function TaskDetailDialog({ open, onOpenChange, task, onEdit }: Props) {
                       return (
                         <div key={i} className="border rounded-lg p-3 bg-background">
                           {meta.isImage ? (
-                            typeof a === "string" ? (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img src={a} alt={`att-${i}`} className="object-cover w-full h-24 rounded border" />
-                            ) : (
-                              <img src={a.data} alt={a.name} className="object-cover w-full h-24 rounded border" />
-                            )
+                            <button
+                              type="button"
+                              className="task-attachment-image-button"
+                              onClick={() =>
+                                setPreviewImage({
+                                  src: meta.href,
+                                  alt: meta.name,
+                                  caption: meta.reason || meta.name,
+                                })
+                              }
+                            >
+                              {typeof a === "string" ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img src={a} alt={`att-${i}`} className="task-attachment-image" />
+                              ) : (
+                                <img src={a.data} alt={a.name} className="task-attachment-image" />
+                              )}
+                            </button>
                           ) : (
                             <div className="flex items-center gap-3 rounded-md border bg-[#f8fafc] px-3 py-2">
                               <div className="flex h-10 w-10 items-center justify-center rounded-md border bg-white text-xs font-semibold text-slate-600">
@@ -311,14 +363,85 @@ export function TaskDetailDialog({ open, onOpenChange, task, onEdit }: Props) {
                         <p className="text-xs text-muted-foreground">No matching comments.</p>
                       ) : filteredComments.map((comment) => {
                         const author = users?.find((u) => u.id === comment.userId);
+                        const canEditExistingComment = !!user?.id && (comment.userId === user.id || String(user.role || "").toLowerCase() === "admin");
+                        const isEditingThisComment = editingCommentId === comment.id;
+                        const isSaveDisabled =
+                          !editingCommentText.trim() || editingCommentText.trim() === String(comment.content || "").trim();
                         return (
                           <div key={comment.id} className="rounded-md border border-border/60 p-3 bg-background">
-                            <p className="text-[11px] font-medium text-foreground">
-                              {author?.name || "User"}
-                            </p>
-                            <p className="text-[12px] text-muted-foreground break-words">
-                              {renderCommentText(comment.content)}
-                            </p>
+                            <div className="mb-2 flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="text-[11px] font-medium text-foreground">
+                                  {author?.name || "User"}
+                                </p>
+                                <p className="text-[10px] text-muted-foreground">
+                                  {comment.createdAt ? new Date(comment.createdAt).toLocaleString() : ""}
+                                </p>
+                              </div>
+                              {canEditExistingComment && !isEditingThisComment && (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 px-2 text-[11px]"
+                                  onClick={() => handleStartEditComment(comment.id, comment.content)}
+                                >
+                                  <Pencil className="mr-1.5 h-3.5 w-3.5" />
+                                  Edit
+                                </Button>
+                              )}
+                            </div>
+                            {isEditingThisComment ? (
+                              <div className="space-y-2">
+                                <Textarea
+                                  value={editingCommentText}
+                                  onChange={(event) => setEditingCommentText(event.target.value)}
+                                  className="min-h-[88px] resize-y text-sm"
+                                  placeholder="Edit comment..."
+                                  onKeyDown={(event) => {
+                                    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+                                      event.preventDefault();
+                                      void handleUpdateComment();
+                                    }
+                                    if (event.key === "Escape") {
+                                      event.preventDefault();
+                                      handleCancelEditComment();
+                                    }
+                                  }}
+                                />
+                                <div className="flex items-center justify-between gap-2">
+                                  <p className="text-[10px] text-muted-foreground">
+                                    Ctrl+Enter se save ho jayega.
+                                  </p>
+                                  <div className="flex gap-2">
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={handleCancelEditComment}
+                                      disabled={updateComment.isPending}
+                                    >
+                                      Cancel
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      onClick={() => void handleUpdateComment()}
+                                      disabled={updateComment.isPending || isSaveDisabled}
+                                    >
+                                      {updateComment.isPending && isEditingThisComment ? (
+                                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                      ) : null}
+                                      Save
+                                    </Button>
+                                  </div>
+                                </div>
+                              </div>
+                            ) : (
+                              <p className="text-[12px] text-muted-foreground break-words">
+                                {renderCommentText(comment.content)}
+                              </p>
+                            )}
                           </div>
                         );
                       })}
@@ -440,7 +563,43 @@ export function TaskDetailDialog({ open, onOpenChange, task, onEdit }: Props) {
             </div>
           </div>
         </div>
-      </DialogContent>
-    </Dialog>
+
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!previewImage} onOpenChange={(isOpen) => (!isOpen ? setPreviewImage(null) : undefined)}>
+        <DialogContent className="fixed !left-1/2 !top-1/2 w-[calc(100vw-1rem)] max-w-[min(96vw,1080px)] !-translate-x-1/2 !-translate-y-1/2 border-none bg-[#1b1b1f] p-3 shadow-2xl sm:p-5 [&>button]:hidden">
+          <DialogHeader className="sr-only">
+            <DialogTitle>Image preview</DialogTitle>
+          </DialogHeader>
+          {previewImage && (
+            <div className="relative">
+              <button
+                type="button"
+                className="absolute right-2 top-2 z-10 flex h-10 w-10 items-center justify-center rounded-full bg-black/55 text-white transition hover:bg-black/75"
+                onClick={() => setPreviewImage(null)}
+                aria-label="Close image preview"
+              >
+                <X className="h-5 w-5" />
+              </button>
+
+              <div className="flex h-[min(78vh,720px)] w-full items-center justify-center overflow-hidden rounded-2xl bg-black/30 p-4 sm:p-6">
+                <img
+                  src={previewImage.src}
+                  alt={previewImage.alt}
+                  className="h-full w-full object-contain"
+                />
+              </div>
+
+              {(previewImage.caption || previewImage.alt) && (
+                <div className="mt-3 w-full rounded-xl bg-black/70 px-4 py-3 text-sm text-slate-200">
+                  {previewImage.caption || previewImage.alt}
+                </div>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

@@ -168,6 +168,17 @@ export const api = {
           404: errorSchemas.notFound,
         },
       },
+      update: {
+        method: 'PATCH' as const,
+        path: '/api/tasks/:id/comments/:commentId',
+        input: insertTaskCommentSchema.pick({ content: true }),
+        responses: {
+          200: z.custom<typeof taskComments.$inferSelect>(),
+          400: errorSchemas.validation,
+          401: errorSchemas.notFound,
+          404: errorSchemas.notFound,
+        },
+      },
     },
     delete: {
       method: 'DELETE' as const,

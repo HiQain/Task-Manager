@@ -115,7 +115,9 @@ export interface IStorage {
   getTaskChatGroup(taskId: number): Promise<TaskChatGroup | undefined>;
   ensureTaskChatGroup(taskId: number, createdById: number): Promise<TaskChatGroup>;
   getTaskComments(taskId: number): Promise<TaskComment[]>;
+  getTaskComment(id: number): Promise<TaskComment | undefined>;
   createTaskComment(data: Pick<InsertTaskComment, "taskId" | "content"> & { userId: number }): Promise<TaskComment>;
+  updateTaskComment(id: number, content: string): Promise<TaskComment>;
   getTaskChatGroups(): Promise<TaskChatGroup[]>;
   getTaskGroupMessages(taskId: number): Promise<TaskGroupMessage[]>;
   createTaskGroupMessage(data: Pick<InsertTaskGroupMessage, "taskId" | "content"> & { fromUserId: number }): Promise<TaskGroupMessage>;
@@ -594,6 +596,11 @@ export class DatabaseStorage implements IStorage {
       .orderBy(asc(taskComments.createdAt));
   }
 
+  async getTaskComment(id: number): Promise<TaskComment | undefined> {
+    const [comment] = await db.select().from(taskComments).where(eq(taskComments.id, id));
+    return comment;
+  }
+
   async createTaskComment(
     data: Pick<InsertTaskComment, "taskId" | "content"> & { userId: number }
   ): Promise<TaskComment> {
@@ -608,6 +615,15 @@ export class DatabaseStorage implements IStorage {
     const [comment] = await db.select().from(taskComments).where(eq(taskComments.id, id));
     if (!comment) {
       throw new Error("Failed to create task comment");
+    }
+    return comment;
+  }
+
+  async updateTaskComment(id: number, content: string): Promise<TaskComment> {
+    await db.update(taskComments).set({ content }).where(eq(taskComments.id, id));
+    const [comment] = await db.select().from(taskComments).where(eq(taskComments.id, id));
+    if (!comment) {
+      throw new Error("Failed to update task comment");
     }
     return comment;
   }

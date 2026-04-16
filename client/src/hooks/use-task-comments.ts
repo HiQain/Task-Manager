@@ -46,3 +46,25 @@ export function useCreateTaskComment(taskId: number) {
     },
   });
 }
+
+export function useUpdateTaskComment(taskId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ commentId, content }: { commentId: number; content: string }) => {
+      const res = await fetch(
+        buildUrl(api.tasks.comments.update.path, { id: taskId, commentId }),
+        {
+          method: api.tasks.comments.update.method,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content }),
+          credentials: "include",
+        },
+      );
+      const body = await readJsonOrThrow(res, "Failed to update comment");
+      return api.tasks.comments.update.responses[200].parse(body);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["tasks", taskId, "comments"] });
+    },
+  });
+}

@@ -379,6 +379,14 @@ export default function ClientCreds() {
       .filter((group): group is ClientGroup => group !== null);
   }, [groupedClients, searchTerm]);
 
+  const hasVisibleProjectActions = useMemo(
+    () =>
+      filteredClientGroups.some((group) =>
+        group.projects.some((project) => project.canEdit || project.canDelete),
+      ),
+    [filteredClientGroups],
+  );
+
   const accessProject = projects.find((project) => project.id === accessProjectId) || null;
   const existingClientNames = useMemo(
     () => getUniqueSortedValues(groupedClients.map((group) => group.clientName)),
@@ -711,42 +719,39 @@ export default function ClientCreds() {
                           <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0">
                               <p className="font-semibold">{project.projectName}</p>
-                              {!project.canEdit && (
-                                <span className="mt-2 inline-flex rounded-full border px-2 py-0.5 text-[11px] text-muted-foreground">
-                                  Read only
-                                </span>
-                              )}
                             </div>
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button type="button" variant="ghost" size="icon" className="h-8 w-8 border">
-                                  <MoreHorizontal className="h-4 w-4" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end" className="w-40">
-                                {project.canDelete && (
-                                  <DropdownMenuItem onClick={() => openAccessDialog(project)}>
-                                    <ShieldCheck className="mr-2 h-4 w-4" />
-                                    Access
-                                  </DropdownMenuItem>
-                                )}
-                                {project.canEdit && (
-                                  <DropdownMenuItem onClick={() => openEditProjectDialog(project)}>
-                                    <Pencil className="mr-2 h-4 w-4" />
-                                    Edit
-                                  </DropdownMenuItem>
-                                )}
-                                {project.canDelete && (
-                                  <DropdownMenuItem
-                                    onClick={() => openDeleteDialog(project)}
-                                    className="text-destructive focus:text-destructive"
-                                  >
-                                    <Trash2 className="mr-2 h-4 w-4" />
-                                    Delete
-                                  </DropdownMenuItem>
-                                )}
-                              </DropdownMenuContent>
-                            </DropdownMenu>
+                            {(project.canEdit || project.canDelete) && (
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button type="button" variant="ghost" size="icon" className="h-8 w-8 border">
+                                    <MoreHorizontal className="h-4 w-4" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" className="w-40">
+                                  {project.canDelete && (
+                                    <DropdownMenuItem onClick={() => openAccessDialog(project)}>
+                                      <ShieldCheck className="mr-2 h-4 w-4" />
+                                      Access
+                                    </DropdownMenuItem>
+                                  )}
+                                  {project.canEdit && (
+                                    <DropdownMenuItem onClick={() => openEditProjectDialog(project)}>
+                                      <Pencil className="mr-2 h-4 w-4" />
+                                      Edit
+                                    </DropdownMenuItem>
+                                  )}
+                                  {project.canDelete && (
+                                    <DropdownMenuItem
+                                      onClick={() => openDeleteDialog(project)}
+                                      className="text-destructive focus:text-destructive"
+                                    >
+                                      <Trash2 className="mr-2 h-4 w-4" />
+                                      Delete
+                                    </DropdownMenuItem>
+                                  )}
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            )}
                           </div>
 
                           <div className="mt-4 space-y-3">
@@ -792,17 +797,19 @@ export default function ClientCreds() {
                   ))}
                 </div>
 
-                <div className="hidden min-h-0 max-h-[calc(100vh-18rem)] flex-1 overflow-auto border bg-background md:block">
-                  <table className="min-w-[1080px] w-full border-separate border-spacing-0 text-sm">
+                <div className="hidden min-h-0 max-h-[calc(100vh-18rem)] flex-1 overflow-y-auto overflow-x-hidden border bg-background md:block">
+                  <table className="w-full table-fixed border-separate border-spacing-0 text-sm">
                     <thead className="sticky top-0 z-10 bg-muted/30 backdrop-blur">
                       <tr>
-                        <th className="border-b border-r border-border bg-muted/40 px-4 py-3 text-left font-semibold">Client</th>
-                        <th className="border-b border-r border-border bg-muted/40 px-4 py-3 text-left font-semibold">Project</th>
-                        <th className="border-b border-r border-border bg-muted/40 px-4 py-3 text-left font-semibold">Via</th>
-                        <th className="border-b border-r border-border bg-muted/40 px-4 py-3 text-left font-semibold">Email / Value</th>
-                        <th className="border-b border-r border-border bg-muted/40 px-4 py-3 text-left font-semibold">Password</th>
-                        <th className="w-[170px] border-b border-r border-border bg-muted/40 px-3 py-3 text-left font-semibold">Link</th>
-                        <th className="w-[72px] border-b border-border bg-muted/40 px-2 py-3 text-center font-semibold">Actions</th>
+                        <th className="w-[14%] border-b border-r border-border bg-muted/40 px-4 py-3 text-left font-semibold">Client</th>
+                        <th className="w-[17%] border-b border-r border-border bg-muted/40 px-4 py-3 text-left font-semibold">Project</th>
+                        <th className="w-[9%] border-b border-r border-border bg-muted/40 px-4 py-3 text-left font-semibold">Via</th>
+                        <th className="w-[22%] border-b border-r border-border bg-muted/40 px-4 py-3 text-left font-semibold">Email / Value</th>
+                        <th className="w-[16%] border-b border-r border-border bg-muted/40 px-4 py-3 text-left font-semibold">Password</th>
+                        <th className="w-[14%] border-b border-r border-border bg-muted/40 px-3 py-3 text-left font-semibold">Link</th>
+                        {hasVisibleProjectActions && (
+                          <th className="w-[8%] border-b border-border bg-muted/40 px-2 py-3 text-center font-semibold">Actions</th>
+                        )}
                       </tr>
                     </thead>
                     <tbody>
@@ -816,27 +823,20 @@ export default function ClientCreds() {
                           return rows.map((row, rowIndex) => (
                             <tr key={`${group.key}-${project.id}-${rowIndex}`} className="align-top odd:bg-[#f8fafc] even:bg-[#eef2f7]">
                               {projectIndex === 0 && rowIndex === 0 && (
-                                <td rowSpan={groupRowCount} className="border-b border-r border-border px-4 py-4 font-semibold whitespace-nowrap align-top">
+                                <td rowSpan={groupRowCount} className="border-b border-r border-border px-4 py-4 font-semibold align-top break-words whitespace-normal">
                                   {group.clientName}
                                 </td>
                               )}
 
                               {rowIndex === 0 && (
-                                <td rowSpan={projectRowCount} className="border-b border-r border-border px-4 py-4 align-top">
-                                  <div className="space-y-2">
-                                    <p className="font-medium">{project.projectName}</p>
-                                    {!project.canEdit && (
-                                      <span className="inline-flex rounded-full border px-2 py-0.5 text-[11px] text-muted-foreground">
-                                        Read only
-                                      </span>
-                                    )}
-                                  </div>
+                                <td rowSpan={projectRowCount} className="border-b border-r border-border px-4 py-4 align-top break-words whitespace-normal">
+                                  <p className="font-medium">{project.projectName}</p>
                                 </td>
                               )}
 
-                              <td className="border-b border-r border-border px-4 py-4 whitespace-nowrap">{row.via || "-"}</td>
-                              <td className="border-b border-r border-border px-4 py-4 break-all">{row.value || "-"}</td>
-                              <td className="border-b border-r border-border px-4 py-4 break-all">
+                              <td className="border-b border-r border-border px-4 py-4 break-words whitespace-normal">{row.via || "-"}</td>
+                              <td className="border-b border-r border-border px-4 py-4 break-all leading-relaxed">{row.value || "-"}</td>
+                              <td className="border-b border-r border-border px-4 py-4 break-all leading-relaxed">
                                 {row.password || "-"}
                               </td>
 
@@ -846,7 +846,7 @@ export default function ClientCreds() {
                                     href={getProjectLinkHref(row.link) || undefined}
                                     target="_blank"
                                     rel="noreferrer"
-                                    className="inline-flex max-w-[145px] items-center gap-1 text-xs text-primary hover:underline"
+                                    className="inline-flex max-w-full items-center gap-1 text-xs text-primary hover:underline"
                                     title={row.link || undefined}
                                   >
                                     <span className="truncate">{getProjectLinkLabel(row.link)}</span>
@@ -857,40 +857,42 @@ export default function ClientCreds() {
                                 )}
                               </td>
 
-                              {rowIndex === 0 && (
+                              {hasVisibleProjectActions && rowIndex === 0 && (
                                 <td rowSpan={projectRowCount} className="border-b border-border px-2 py-3 align-top">
-                                  <div className="flex justify-center">
-                                    <DropdownMenu>
-                                      <DropdownMenuTrigger asChild>
-                                        <Button type="button" variant="ghost" size="icon" className="h-8 w-8 border">
-                                          <MoreHorizontal className="h-4 w-4" />
-                                        </Button>
-                                      </DropdownMenuTrigger>
-                                      <DropdownMenuContent align="end" className="w-40">
-                                        {project.canDelete && (
-                                          <DropdownMenuItem onClick={() => openAccessDialog(project)}>
-                                            <ShieldCheck className="mr-2 h-4 w-4" />
-                                            Access
-                                          </DropdownMenuItem>
-                                        )}
-                                        {project.canEdit && (
-                                          <DropdownMenuItem onClick={() => openEditProjectDialog(project)}>
-                                            <Pencil className="mr-2 h-4 w-4" />
-                                            Edit
-                                          </DropdownMenuItem>
-                                        )}
-                                        {project.canDelete && (
-                                          <DropdownMenuItem
-                                            onClick={() => openDeleteDialog(project)}
-                                            className="text-destructive focus:text-destructive"
-                                          >
-                                            <Trash2 className="mr-2 h-4 w-4" />
-                                            Delete
-                                          </DropdownMenuItem>
-                                        )}
-                                      </DropdownMenuContent>
-                                    </DropdownMenu>
-                                  </div>
+                                  {(project.canEdit || project.canDelete) && (
+                                    <div className="flex justify-center">
+                                      <DropdownMenu>
+                                        <DropdownMenuTrigger asChild>
+                                          <Button type="button" variant="ghost" size="icon" className="h-8 w-8 border">
+                                            <MoreHorizontal className="h-4 w-4" />
+                                          </Button>
+                                        </DropdownMenuTrigger>
+                                        <DropdownMenuContent align="end" className="w-40">
+                                          {project.canDelete && (
+                                            <DropdownMenuItem onClick={() => openAccessDialog(project)}>
+                                              <ShieldCheck className="mr-2 h-4 w-4" />
+                                              Access
+                                            </DropdownMenuItem>
+                                          )}
+                                          {project.canEdit && (
+                                            <DropdownMenuItem onClick={() => openEditProjectDialog(project)}>
+                                              <Pencil className="mr-2 h-4 w-4" />
+                                              Edit
+                                            </DropdownMenuItem>
+                                          )}
+                                          {project.canDelete && (
+                                            <DropdownMenuItem
+                                              onClick={() => openDeleteDialog(project)}
+                                              className="text-destructive focus:text-destructive"
+                                            >
+                                              <Trash2 className="mr-2 h-4 w-4" />
+                                              Delete
+                                            </DropdownMenuItem>
+                                          )}
+                                        </DropdownMenuContent>
+                                      </DropdownMenu>
+                                    </div>
+                                  )}
                                 </td>
                               )}
                             </tr>
