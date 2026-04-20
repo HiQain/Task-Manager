@@ -22,6 +22,8 @@ interface TaskCardProps {
   canMove: boolean;
   onEdit: (task: Task) => void;
   onDelete: (id: number) => void;
+  onRestore?: (task: Task) => void;
+  onPermanentDelete?: (task: Task) => void;
   onView?: (task: Task) => void;
   onMessage?: (task: Task) => void;
 }
@@ -36,6 +38,7 @@ const statusBorderColors = {
   todo: "border-slate-200",
   in_progress: "border-blue-200",
   done: "border-green-200",
+  trash: "border-rose-200 bg-rose-50/40",
 };
 
 function formatDueDate(value?: string | Date | null): string {
@@ -62,7 +65,7 @@ function getAttachmentMeta(attachment: any, index: number) {
   };
 }
 
-export function TaskCard({ task, index, canEdit, canMove, onEdit, onDelete, onView, onMessage }: TaskCardProps) {
+export function TaskCard({ task, index, canEdit, canMove, onEdit, onDelete, onRestore, onPermanentDelete, onView, onMessage }: TaskCardProps) {
   const { data: users } = useUsers();
   const { user } = useAuth();
   const rawAssignedToIds = (task as any).assignedToIds;
@@ -98,6 +101,7 @@ export function TaskCard({ task, index, canEdit, canMove, onEdit, onDelete, onVi
   })();
   const canOpenChat = (() => {
     if (task.status === "done") return false;
+    if (task.status === "trash") return false;
     if (!user?.id) return false;
     const participantIds = new Set<number>(
       [task.createdById, ...assignedToIds].filter((id): id is number => typeof id === "number" && Number.isFinite(id))
@@ -164,23 +168,51 @@ export function TaskCard({ task, index, canEdit, canMove, onEdit, onDelete, onVi
                         <MoreHorizontal className="w-4 h-4 text-muted-foreground hover:text-foreground" />
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onEdit(task);
-                          }}
-                        >
-                          Edit
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          className="text-destructive focus:text-destructive"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onDelete(task.id);
-                          }}
-                        >
-                          Delete
-                        </DropdownMenuItem>
+                        {task.status === "trash" ? (
+                          <>
+                            {onRestore && (
+                              <DropdownMenuItem
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onRestore(task);
+                                }}
+                              >
+                                Restore to To Do
+                              </DropdownMenuItem>
+                            )}
+                            {onPermanentDelete && (
+                              <DropdownMenuItem
+                                className="text-destructive focus:text-destructive"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onPermanentDelete(task);
+                                }}
+                              >
+                                Delete permanently
+                              </DropdownMenuItem>
+                            )}
+                          </>
+                        ) : (
+                          <>
+                            <DropdownMenuItem
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onEdit(task);
+                              }}
+                            >
+                              Edit
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              className="text-destructive focus:text-destructive"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onDelete(task.id);
+                              }}
+                            >
+                              Move to trash
+                            </DropdownMenuItem>
+                          </>
+                        )}
                       </DropdownMenuContent>
                     </DropdownMenu>
                   )}

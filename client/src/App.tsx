@@ -183,7 +183,7 @@ function Layout({ children }: { children: React.ReactNode }) {
         onMobileOpenChange={setIsMobileSidebarOpen}
       />
 
-      <main className="flex-1 md:ml-64 p-4 md:p-8 overflow-y-auto min-h-screen">
+      <main className="flex-1 min-w-0 md:ml-64 p-4 md:p-8 overflow-y-auto min-h-screen">
         <header className="mb-6 md:mb-8 flex flex-col gap-4 md:flex-row md:items-center md:justify-between animate-in">
           <div className="flex items-start gap-3">
             <Button

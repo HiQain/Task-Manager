@@ -47,7 +47,7 @@ export function isTaskOverdue(
   dueDate?: string | Date | null,
   referenceDate: Date = new Date(),
 ): boolean {
-  if (status === "done") return false;
+  if (status === "done" || status === "trash") return false;
   const parsedDueDate = parseDateOnly(dueDate);
   if (!parsedDueDate) return false;
 
