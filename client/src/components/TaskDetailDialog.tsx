@@ -115,7 +115,13 @@ export function TaskDetailDialog({ open, onOpenChange, task, onEdit }: Props) {
   const attachments = getNonInlineTaskAttachments((taskRecord as any)?.attachments);
 
   const statusLabel =
-    taskRecord?.status === "in_progress" ? "In Progress" : taskRecord?.status === "done" ? "Done" : "To Do";
+    taskRecord?.status === "in_progress"
+      ? "In Progress"
+      : taskRecord?.status === "done"
+        ? "Done"
+        : taskRecord?.status === "trash"
+          ? "Trash"
+          : "To Do";
 
   const priorityClass =
     taskRecord?.priority === "high"
@@ -552,7 +558,7 @@ export function TaskDetailDialog({ open, onOpenChange, task, onEdit }: Props) {
             </div>
 
             <div className="flex justify-end gap-2">
-              {isCreatedByMe && onEdit && (
+              {isCreatedByMe && taskRecord.status !== "trash" && onEdit && (
                 <Button variant="outline" onClick={() => onEdit(taskRecord)}>
                   Edit Task
                 </Button>

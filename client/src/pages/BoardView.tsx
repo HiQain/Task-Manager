@@ -17,9 +17,10 @@ import { useEnsureTaskGroup } from "@/hooks/use-chat";
 import { isTaskOverdue, parseDateOnly } from "@/lib/utils";
 
 const COLUMNS = [
-  { id: "todo", title: "To Do", color: "bg-slate-500" },
-  { id: "in_progress", title: "In Progress", color: "bg-blue-500" },
-  { id: "done", title: "Done", color: "bg-green-500" },
+  { id: "todo", title: "To Do", color: "bg-slate-500", panelClassName: "bg-muted/30" },
+  { id: "in_progress", title: "In Progress", color: "bg-blue-500", panelClassName: "bg-muted/30" },
+  { id: "done", title: "Done", color: "bg-green-500", panelClassName: "bg-muted/30" },
+  { id: "trash", title: "Trash", color: "bg-rose-500", panelClassName: "bg-rose-50/70" },
 ];
 
 function getAssignedToIds(task: Task): number[] {
@@ -55,7 +56,7 @@ function getTaskNonAdminParticipantCount(task: Task, users: Array<{ id: number; 
 }
 
 export default function BoardView() {
-  const { data: tasks, isLoading } = useTasks();
+  const { data: tasks, isLoading } = useTasks({ includeTrashed: true });
   const { data: users } = useUsers();
   const updateTask = useUpdateTask();
   const deleteTask = useDeleteTask();
@@ -73,7 +74,7 @@ export default function BoardView() {
   const [ownershipFilter, setOwnershipFilter] = useState("all");
   const [assigneeFilter, setAssigneeFilter] = useState("all");
   const [dueFilter, setDueFilter] = useState("all");
-  const [deleteTarget, setDeleteTarget] = useState<{ id: number; title: string } | null>(null);
+  const [taskActionTarget, setTaskActionTarget] = useState<{ id: number; title: string; mode: "trash" | "delete" } | null>(null);
 
   const onDragEnd = (result: DropResult) => {
     const { destination, source, draggableId } = result;
@@ -82,7 +83,7 @@ export default function BoardView() {
     if (destination.droppableId === source.droppableId && destination.index === source.index) return;
 
     const taskId = parseInt(draggableId);
-    const draggedTask = visibleTasks.find((task) => task.id === taskId);
+    const draggedTask = filteredTasks.find((task) => task.id === taskId);
     const canMoveDraggedTask = !!user?.id && !!draggedTask && (
       user.role === "admin" ||
       draggedTask.createdById === user.id ||
@@ -98,15 +99,36 @@ export default function BoardView() {
     }
 
     const newStatus = destination.droppableId;
+    const isTrashTransition = source.droppableId === "trash" || newStatus === "trash";
+    const canManageTrash = !!user?.id && !!draggedTask && (
+      user.role === "admin" ||
+      draggedTask.createdById === user.id
+    );
+    if (isTrashTransition && !canManageTrash) {
+      toast({
+        title: "Trash is restricted",
+        description: "Only the task creator or admin can move tasks in or out of trash.",
+        variant: "destructive",
+      });
+      return;
+    }
 
     // Optimistic update handled by React Query invalidation
     updateTask.mutate({
       id: taskId,
-      status: newStatus
+      status: newStatus,
+      completed: newStatus === "done",
     }, {
+      onSuccess: () => {
+        if (newStatus === "trash") {
+          toast({ title: "Task moved to trash" });
+        } else if (source.droppableId === "trash") {
+          toast({ title: "Task restored" });
+        }
+      },
       onError: () => {
         toast({
-          title: "Failed to move task",
+          title: isTrashTransition ? "Failed to update trash" : "Failed to move task",
           variant: "destructive",
         });
       }
@@ -119,16 +141,56 @@ export default function BoardView() {
   };
 
   const handleDelete = (id: number) => {
-    const task = visibleTasks.find((entry) => entry.id === id);
-    setDeleteTarget({ id, title: task?.title || "this task" });
+    const task = filteredTasks.find((entry) => entry.id === id);
+    setTaskActionTarget({ id, title: task?.title || "this task", mode: "trash" });
   };
 
-  const confirmDelete = () => {
-    if (!deleteTarget) return;
-    deleteTask.mutate(deleteTarget.id, {
-      onSuccess: () => toast({ title: "Task deleted" }),
+  const handleRestore = (task: Task) => {
+    updateTask.mutate(
+      {
+        id: task.id,
+        status: "todo",
+        completed: false,
+      },
+      {
+        onSuccess: () => toast({ title: "Task restored to To Do" }),
+        onError: () => {
+          toast({
+            title: "Restore failed",
+            description: "The task could not be restored from trash.",
+            variant: "destructive",
+          });
+        },
+      },
+    );
+  };
+
+  const handlePermanentDelete = (task: Task) => {
+    setTaskActionTarget({ id: task.id, title: task.title || "this task", mode: "delete" });
+  };
+
+  const confirmTaskAction = () => {
+    if (!taskActionTarget) return;
+
+    if (taskActionTarget.mode === "trash") {
+      updateTask.mutate(
+        {
+          id: taskActionTarget.id,
+          status: "trash",
+          completed: false,
+        },
+        {
+          onSuccess: () => toast({ title: "Task moved to trash" }),
+        },
+      );
+      setTaskActionTarget(null);
+      return;
+    }
+
+    deleteTask.mutate(taskActionTarget.id, {
+      onSuccess: () => toast({ title: "Task deleted permanently" }),
     });
-    setDeleteTarget(null);
+    setTaskActionTarget(null);
   };
 
   const handleView = (task: Task) => {
@@ -189,7 +251,7 @@ export default function BoardView() {
     return assignedToIds.includes(user.id);
   });
 
-  const visibleTasks = useMemo(() => {
+  const filteredTasks = useMemo(() => {
     return baseVisibleTasks.filter((task) => {
       const assignedToIds = getAssignedToIds(task);
       const normalizedSearch = searchQuery.trim().toLowerCase();
@@ -237,6 +299,16 @@ export default function BoardView() {
     });
   }, [assigneeFilter, baseVisibleTasks, dueFilter, ownershipFilter, priorityFilter, searchQuery, user?.id]);
 
+  const visibleTasks = useMemo(
+    () => filteredTasks.filter((task) => task.status !== "trash"),
+    [filteredTasks],
+  );
+
+  const trashedTasks = useMemo(
+    () => filteredTasks.filter((task) => task.status === "trash"),
+    [filteredTasks],
+  );
+
   const filterUserOptions = useMemo(() => {
     const visibleUserIds = new Set<number>();
     baseVisibleTasks.forEach((task) => {
@@ -261,7 +333,7 @@ export default function BoardView() {
     setDueFilter("all");
   };
 
-  const tasksByStatus = visibleTasks.reduce((acc, task) => {
+  const tasksByStatus = [...visibleTasks, ...trashedTasks].reduce((acc, task) => {
     const status = task.status || "todo";
     if (!acc[status]) acc[status] = [];
     acc[status].push(task);
@@ -277,7 +349,7 @@ export default function BoardView() {
   }
 
   return (
-    <div className="h-full pb-4">
+    <div className="h-full min-w-0 pb-4">
       <div className="mb-4 rounded-xl border border-border/60 bg-card p-3">
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-6">
           <Input
@@ -338,7 +410,7 @@ export default function BoardView() {
 
         <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-xs text-muted-foreground">
-            Showing {visibleTasks.length} of {baseVisibleTasks.length} tasks
+            Showing {visibleTasks.length} active and {trashedTasks.length} trashed tasks out of {baseVisibleTasks.length}
           </p>
           <Button variant="ghost" size="sm" onClick={resetFilters} className="gap-2">
             <RotateCcw className="h-3.5 w-3.5" />
@@ -348,9 +420,10 @@ export default function BoardView() {
       </div>
 
       <DragDropContext onDragEnd={onDragEnd}>
-        <div className="flex flex-col lg:flex-row gap-4 lg:gap-6 h-full">
-          {COLUMNS.map((column) => (
-            <div key={column.id} className="flex-1 flex flex-col min-w-0 lg:min-w-[300px]">
+        <div className="overflow-x-auto pb-2 [-webkit-overflow-scrolling:touch]">
+          <div className="flex min-w-max gap-4 lg:gap-6">
+            {COLUMNS.map((column) => (
+              <div key={column.id} className="flex w-[280px] shrink-0 flex-col sm:w-[320px] xl:w-[340px]">
               <div className="flex items-center justify-between mb-4 px-1">
                 <div className="flex items-center gap-2">
                   <div className={`w-2 h-2 rounded-full ${column.color}`} />
@@ -363,27 +436,34 @@ export default function BoardView() {
                 </div>
               </div>
 
-              <div className="flex-1 bg-muted/30 rounded-xl p-3 border border-border/50">
+              <div className={`min-h-[520px] rounded-xl border border-border/50 p-3 ${column.panelClassName}`}>
                 <Droppable droppableId={column.id}>
                   {(provided, snapshot) => (
                     <div
                       {...provided.droppableProps}
                       ref={provided.innerRef}
-                      className={`h-full transition-colors ${snapshot.isDraggingOver ? "bg-muted/50 rounded-lg" : ""}`}
+                      className={`h-full min-h-[490px] transition-colors ${snapshot.isDraggingOver ? "bg-muted/50 rounded-lg" : ""}`}
                     >
                       {tasksByStatus[column.id]?.map((task: Task, index: number) => (
                         <TaskCard
                           key={task.id}
                           task={task}
                           index={index}
-                          canEdit={!!user?.id && task.createdById === user.id}
-                          canMove={!!user?.id && (
-                            user.role === "admin" ||
+                          canEdit={!!user?.id && (
                             task.createdById === user.id ||
-                            getAssignedToIds(task).includes(user.id)
+                            user.role === "admin"
                           )}
+                          canMove={task.status === "trash"
+                            ? !!user?.id && (task.createdById === user.id || user.role === "admin")
+                            : !!user?.id && (
+                              user.role === "admin" ||
+                              task.createdById === user.id ||
+                              getAssignedToIds(task).includes(user.id)
+                            )}
                           onEdit={handleEdit}
                           onDelete={handleDelete}
+                          onRestore={handleRestore}
+                          onPermanentDelete={handlePermanentDelete}
                           onView={handleView}
                           onMessage={(task) => {
                             void handleMessage(task);
@@ -392,7 +472,7 @@ export default function BoardView() {
                       ))}
                       {provided.placeholder}
 
-                      {!!user?.id && (
+                      {!!user?.id && column.id !== "trash" && (
                         <button
                           onClick={() => {
                             setEditingTask(null);
@@ -408,8 +488,9 @@ export default function BoardView() {
                   )}
                 </Droppable>
               </div>
-            </div>
-          ))}
+              </div>
+            ))}
+          </div>
         </div>
       </DragDropContext>
 
@@ -436,20 +517,31 @@ export default function BoardView() {
         }}
       />
 
-      <Dialog open={deleteTarget !== null} onOpenChange={(open) => (!open ? setDeleteTarget(null) : undefined)}>
+      <Dialog open={taskActionTarget !== null} onOpenChange={(open) => (!open ? setTaskActionTarget(null) : undefined)}>
         <DialogContent className="w-[calc(100vw-2rem)] sm:w-full sm:max-w-[420px] fixed !top-1/2 !left-1/2 !-translate-x-1/2 !-translate-y-1/2">
           <DialogHeader>
-            <DialogTitle>Delete Task</DialogTitle>
+            <DialogTitle>{taskActionTarget?.mode === "delete" ? "Delete Permanently" : "Move To Trash"}</DialogTitle>
             <DialogDescription>
-              {`Are you sure you want to delete ${deleteTarget?.title || "this task"}?`}
+              {taskActionTarget?.mode === "delete"
+                ? `This will permanently remove ${taskActionTarget?.title || "this task"} and cannot be undone.`
+                : `Move ${taskActionTarget?.title || "this task"} to trash? You can restore it later from the Trash column.`}
             </DialogDescription>
           </DialogHeader>
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" type="button" onClick={() => setDeleteTarget(null)}>
+            <Button variant="outline" type="button" onClick={() => setTaskActionTarget(null)}>
               Cancel
             </Button>
-            <Button variant="destructive" type="button" onClick={confirmDelete} disabled={deleteTask.isPending}>
-              {deleteTask.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Delete"}
+            <Button
+              variant={taskActionTarget?.mode === "delete" ? "destructive" : "default"}
+              type="button"
+              onClick={confirmTaskAction}
+              disabled={deleteTask.isPending || updateTask.isPending}
+            >
+              {deleteTask.isPending || updateTask.isPending
+                ? <Loader2 className="w-4 h-4 animate-spin" />
+                : taskActionTarget?.mode === "delete"
+                  ? "Delete permanently"
+                  : "Move to trash"}
             </Button>
           </div>
         </DialogContent>

@@ -403,6 +403,7 @@ export async function registerRoutes(
     if (!status) return "To Do";
     if (status === "in_progress") return "In Progress";
     if (status === "done") return "Done";
+    if (status === "trash") return "Trash";
     return "To Do";
   };
 
@@ -1751,11 +1752,16 @@ export async function registerRoutes(
     }
 
     const tasks = await storage.getTasks();
+    const includeTrashed = ["1", "true"].includes(String(req.query.includeTrashed || "").toLowerCase());
+    const isVisibleTask = (task: any) => {
+      if (!includeTrashed && task.status === "trash") return false;
+      return isAdminUser(req.user) || canUserAccessTask(req.user, task);
+    };
     if (isAdminUser(req.user)) {
-      return res.json(tasks);
+      return res.json(tasks.filter(isVisibleTask));
     }
 
-    const visibleTasks = tasks.filter((task) => canUserAccessTask(req.user, task));
+    const visibleTasks = tasks.filter(isVisibleTask);
     res.json(visibleTasks);
   });
 
@@ -1785,7 +1791,7 @@ export async function registerRoutes(
         ...input,
         createdById: req.user.id,
       });
-      if (task.status !== "done" && await canTaskHaveGroupChat(task)) {
+      if (task.status !== "done" && task.status !== "trash" && await canTaskHaveGroupChat(task)) {
         await storage.ensureTaskChatGroup(task.id, req.user.id);
       }
       await pushTaskUpdateToRelevantUsers("created", task);
@@ -1842,7 +1848,7 @@ export async function registerRoutes(
       const { createdById: _createdById, ...safeInput } = (input as any) || {};
 
       const updated = await storage.updateTask(id, safeInput);
-      if (updated.status !== "done" && await canTaskHaveGroupChat(updated)) {
+      if (updated.status !== "done" && updated.status !== "trash" && await canTaskHaveGroupChat(updated)) {
         await storage.ensureTaskChatGroup(updated.id, req.user.id);
       }
       await pushTaskUpdateToRelevantUsers("updated", updated);
@@ -2178,7 +2184,7 @@ export async function registerRoutes(
     for (const group of groups) {
       const task = await storage.getTask(group.taskId);
       if (!task) continue;
-      if (task.status === "done") continue;
+      if (task.status === "done" || task.status === "trash") continue;
       if (!(await canTaskHaveGroupChat(task))) continue;
       const participantIds = getTaskParticipantIds(task);
       if (!participantIds.includes(req.user.id)) continue;
@@ -2199,7 +2205,7 @@ export async function registerRoutes(
     for (const group of groups) {
       const task = await storage.getTask(group.taskId);
       if (!task) continue;
-      if (task.status === "done") continue;
+      if (task.status === "done" || task.status === "trash") continue;
       if (!(await canTaskHaveGroupChat(task))) continue;
       const participantIds = getTaskParticipantIds(task);
       if (!participantIds.includes(req.user.id)) continue;
@@ -2231,8 +2237,8 @@ export async function registerRoutes(
     if (!task) {
       return res.status(404).json({ message: "Task not found" });
     }
-    if (task.status === "done") {
-      return res.status(400).json({ message: "Task group chat is unavailable for done tasks" });
+    if (task.status === "done" || task.status === "trash") {
+      return res.status(400).json({ message: "Task group chat is unavailable for completed or trashed tasks" });
     }
     if (!(await canTaskHaveGroupChat(task))) {
       return res.status(400).json({ message: "Task group chat requires at least 3 active participants" });
@@ -2268,8 +2274,8 @@ export async function registerRoutes(
     if (!task) {
       return res.status(404).json({ message: "Task not found" });
     }
-    if (task.status === "done") {
-      return res.status(404).json({ message: "Task group not available for done tasks" });
+    if (task.status === "done" || task.status === "trash") {
+      return res.status(404).json({ message: "Task group not available for completed or trashed tasks" });
     }
     if (!(await canTaskHaveGroupChat(task))) {
       return res.status(404).json({ message: "Task group not available for tasks with fewer than 3 active participants" });
@@ -2297,8 +2303,8 @@ export async function registerRoutes(
     if (!task) {
       return res.status(404).json({ message: "Task not found" });
     }
-    if (task.status === "done") {
-      return res.status(400).json({ message: "Task group chat is unavailable for done tasks" });
+    if (task.status === "done" || task.status === "trash") {
+      return res.status(400).json({ message: "Task group chat is unavailable for completed or trashed tasks" });
     }
     if (!(await canTaskHaveGroupChat(task))) {
       return res.status(400).json({ message: "Task group chat requires at least 3 active participants" });
@@ -2386,8 +2392,8 @@ export async function registerRoutes(
     if (!task) {
       return res.status(404).json({ message: "Task not found" });
     }
-    if (task.status === "done") {
-      return res.status(404).json({ message: "Task group not available for done tasks" });
+    if (task.status === "done" || task.status === "trash") {
+      return res.status(404).json({ message: "Task group not available for completed or trashed tasks" });
     }
     if (!canUserAccessTask(req.user, task)) {
       return res.status(403).json({ message: "Not authorized to mark this group as read" });

@@ -1,11 +1,12 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, buildUrl, type TaskInput } from "@shared/routes";
 
-export function useTasks() {
+export function useTasks(options?: { includeTrashed?: boolean }) {
   return useQuery({
-    queryKey: [api.tasks.list.path],
+    queryKey: [api.tasks.list.path, options?.includeTrashed ? "with-trash" : "active-only"],
     queryFn: async () => {
-      const res = await fetch(api.tasks.list.path, {
+      const url = options?.includeTrashed ? `${api.tasks.list.path}?includeTrashed=1` : api.tasks.list.path;
+      const res = await fetch(url, {
         credentials: "include",
       });
       if (!res.ok) throw new Error("Failed to fetch tasks");
