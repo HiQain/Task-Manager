@@ -2,7 +2,6 @@ import type { Express, Request } from "express";
 import type { Server } from "http";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import mysql from "mysql2/promise";
 import { storage } from "./storage";
 import { api } from "@shared/routes";
@@ -21,7 +20,6 @@ declare module "express-session" {
 
 const activeSessionByUserId = new Map<number, string>();
 const pendingCallsByUserId = new Map<number, { fromUserId: number; signal: any; createdAt: number }>();
-const routesDir = path.dirname(fileURLToPath(import.meta.url));
 
 declare global {
   namespace Express {
@@ -2516,7 +2514,6 @@ async function applyPendingMigrations() {
     const candidateDirs = [
       path.resolve(process.cwd(), "migrations"),
       path.resolve(process.cwd(), "../migrations"),
-      path.resolve(routesDir, "../migrations"),
     ];
     let migrationsDir: string | null = null;
 

@@ -1,4 +1,4 @@
-import { Switch, Route, useLocation } from "wouter";
+import { Router as WouterRouter, Switch, Route, useLocation } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Menu } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { initPushNotifications } from "@/lib/push";
+import { appBasePath, withBasePath } from "@/lib/base-path";
 
 // Pages
 import Overview from "@/pages/Overview";
@@ -176,7 +177,7 @@ function Layout({ children }: { children: React.ReactNode }) {
         onNewTask={() => setIsDialogOpen(true)}
         onLogout={() => {
           logout();
-          window.location.href = "/login";
+          window.location.href = withBasePath("login");
         }}
         mobileOpen={isMobileSidebarOpen}
         onMobileOpenChange={setIsMobileSidebarOpen}
@@ -229,9 +230,11 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <Layout>
-          <Router />
-        </Layout>
+        <WouterRouter base={appBasePath === "/" ? "" : appBasePath}>
+          <Layout>
+            <Router />
+          </Layout>
+        </WouterRouter>
         <Toaster />
       </TooltipProvider>
     </QueryClientProvider>

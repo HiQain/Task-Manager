@@ -1,3 +1,5 @@
+import { withBasePath } from "./base-path";
+
 function urlBase64ToUint8Array(base64String: string) {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
@@ -10,7 +12,7 @@ function urlBase64ToUint8Array(base64String: string) {
 }
 
 async function registerServiceWorker() {
-  return navigator.serviceWorker.register("/sw.js");
+  return navigator.serviceWorker.register(withBasePath("sw.js"));
 }
 
 async function fetchVapidPublicKey() {

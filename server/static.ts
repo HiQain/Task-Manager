@@ -1,12 +1,9 @@
 import express, { type Express } from "express";
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "node:url";
-
-const staticDir = path.dirname(fileURLToPath(import.meta.url));
 
 export function serveStatic(app: Express) {
-  const distPath = path.resolve(staticDir, "public");
+  const distPath = path.resolve(process.cwd(), "dist", "public");
   if (!fs.existsSync(distPath)) {
     throw new Error(
       `Could not find the build directory: ${distPath}, make sure to build the client first`,
