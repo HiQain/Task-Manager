@@ -10,6 +10,7 @@ import crypto from "crypto";
 import webpush from "web-push";
 import session from "express-session";
 import { WebSocketServer, WebSocket } from "ws";
+import { MySqlSessionStore } from "./session-store";
 import "express-session";
 
 declare module "express-session" {
@@ -468,8 +469,10 @@ export async function registerRoutes(
     return "To Do";
   };
 
+  const sessionStore = new MySqlSessionStore();
   const sessionMiddleware = session({
     secret: process.env.SESSION_SECRET || "your-secret-key",
+    store: sessionStore,
     resave: false,
     saveUninitialized: false,
     proxy: isProduction,
@@ -479,7 +482,7 @@ export async function registerRoutes(
       sameSite: sessionCookieSameSite,
       maxAge: 1000 * 60 * 60 * 24 * 7, // 7 days
     },
-  }) as ReturnType<typeof session> & { store: session.Store };
+  });
   app.use(sessionMiddleware);
 
   const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
@@ -495,9 +498,9 @@ export async function registerRoutes(
     }
 
     const storedSession = await new Promise<session.SessionData | null>((resolve) => {
-      sessionMiddleware.store.get(
+      sessionStore.get(
         cookieSessionId,
-        (err: Error | null, currentSession?: session.SessionData | null) => {
+        (err: unknown, currentSession?: session.SessionData | null) => {
           if (err || !currentSession) {
             resolve(null);
             return;
@@ -754,9 +757,14 @@ export async function registerRoutes(
         return res.status(401).json({ message: "Invalid email or password" });
       }
 
-      const existingSessionId = activeSessionByUserId.get(user.id);
+      const existingSessionId =
+        activeSessionByUserId.get(user.id) ||
+        (await sessionStore.getActiveSessionIdForUser(user.id, req.sessionID));
       if (existingSessionId && existingSessionId !== req.sessionID) {
         revokeUserSockets(user.id, "signed_in_elsewhere");
+      }
+      await sessionStore.destroyUserSessions(user.id, req.sessionID);
+      if (existingSessionId && existingSessionId !== req.sessionID) {
         req.sessionStore.destroy(existingSessionId, () => {
           // ignore destroy errors
         });
@@ -927,14 +935,14 @@ export async function registerRoutes(
           mustChangePassword: false,
         } as any);
 
-        const activeSessionId = activeSessionByUserId.get(id);
+        const activeSessionId =
+          activeSessionByUserId.get(id) ||
+          (await sessionStore.getActiveSessionIdForUser(id));
         if (activeSessionId) {
           revokeUserSockets(id, "account_deactivated");
-          req.sessionStore.destroy(activeSessionId, () => {
-            // ignore destroy errors
-          });
           activeSessionByUserId.delete(id);
         }
+        await sessionStore.destroyUserSessions(id);
 
         const sockets = wsClientsByUserId.get(id);
         sockets?.forEach((socket) => socket.close());
