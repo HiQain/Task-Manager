@@ -24,6 +24,7 @@ export function Sidebar({
   const { data: notificationsUnread } = useNotificationUnreadCount();
   const totalUnread = (unreadCounts?.total || 0) + (taskGroupUnreadCounts?.total || 0);
   const notificationUnreadCount = notificationsUnread?.count || 0;
+  const effectiveNotificationUnreadCount = location === "/notifications" ? 0 : notificationUnreadCount;
   const canAccessStorage = !!user?.allowStorage;
   const canAccessClientCreds = user?.role === "admin" || !!user?.allowClientCreds;
 
@@ -83,9 +84,9 @@ export function Sidebar({
                     {totalUnread > 99 ? "99+" : totalUnread}
                   </span>
                 )}
-                {item.href === "/notifications" && notificationUnreadCount > 0 && (
+                {item.href === "/notifications" && effectiveNotificationUnreadCount > 0 && (
                   <span className="ml-auto min-w-5 h-5 px-1 rounded-full bg-destructive text-destructive-foreground text-[10px] font-semibold flex items-center justify-center">
-                    {notificationUnreadCount > 99 ? "99+" : notificationUnreadCount}
+                    {effectiveNotificationUnreadCount > 99 ? "99+" : effectiveNotificationUnreadCount}
                   </span>
                 )}
               </div>

@@ -115,7 +115,10 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
       const item = await readFile(file);
       next.push(item);
     }
-    form.setValue("attachments" as any, next as any);
+    form.setValue("attachments" as any, next as any, {
+      shouldDirty: true,
+      shouldTouch: true,
+    });
   };
 
   const removeAttachment = (indexToRemove: number) => {
@@ -284,6 +287,7 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
                       <FormLabel>Description</FormLabel>
                       <FormControl>
                         <RichTextEditor
+                          key={task?.id ?? "new-task"}
                           value={field.value || ""}
                           onChange={(val) => field.onChange(val)}
                           attachments={attachments}
@@ -422,10 +426,11 @@ export function TaskDialog({ open, onOpenChange, task }: TaskDialogProps) {
                   }}
                 >
                   <FormLabel>Attachments</FormLabel>
-                  {/* Hidden single-file input; use button to trigger for one-at-a-time selection */}
+                  {/* Hidden multi-file input; use the button to pick one or many files at once. */}
                   <input
                     type="file"
                     accept="image/*,application/*"
+                    multiple
                     className="hidden"
                     ref={(el) => (fileInputRef.current = el)}
                     onChange={async (e) => {

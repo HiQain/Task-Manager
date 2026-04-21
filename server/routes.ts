@@ -410,6 +410,28 @@ export async function registerRoutes(
     );
   };
 
+  const sendPushOnly = async (
+    userIds: Iterable<number>,
+    payload: {
+      title: string;
+      description: string;
+      url?: string;
+      tag?: string;
+    },
+  ) => {
+    const uniqueUserIds = new Set<number>(userIds);
+    await Promise.all(
+      Array.from(uniqueUserIds).map((userId) =>
+        sendPushToUser(userId, {
+          title: payload.title,
+          body: payload.description,
+          url: payload.url || "/",
+          tag: payload.tag || "notification",
+        }),
+      ),
+    );
+  };
+
   const pushTaskUpdateToRelevantUsers = async (
     action: "created" | "updated" | "deleted",
     task: any
@@ -446,20 +468,61 @@ export async function registerRoutes(
     return "To Do";
   };
 
+  const sessionMiddleware = session({
+    secret: process.env.SESSION_SECRET || "your-secret-key",
+    resave: false,
+    saveUninitialized: false,
+    proxy: isProduction,
+    cookie: {
+      httpOnly: true,
+      secure: sessionCookieSecure,
+      sameSite: sessionCookieSameSite,
+      maxAge: 1000 * 60 * 60 * 24 * 7, // 7 days
+    },
+  }) as ReturnType<typeof session> & { store: session.Store };
+  app.use(sessionMiddleware);
+
   const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
   wss.on("connection", async (socket, req) => {
     const url = new URL(req.url || "", "http://localhost");
-    const userId = Number(url.searchParams.get("userId"));
+    const requestedUserId = Number(url.searchParams.get("userId"));
     const cookieSessionId = parseSessionIdFromCookieHeader(req.headers.cookie);
-    const activeSessionId = Number.isFinite(userId) ? activeSessionByUserId.get(userId) : null;
     let activeRoomUserId: number | null = null;
     let activeTaskGroupId: number | null = null;
-    if (!Number.isFinite(userId)) {
+    if (!cookieSessionId) {
+      socket.close(4001, "Unauthorized");
+      return;
+    }
+
+    const storedSession = await new Promise<session.SessionData | null>((resolve) => {
+      sessionMiddleware.store.get(
+        cookieSessionId,
+        (err: Error | null, currentSession?: session.SessionData | null) => {
+          if (err || !currentSession) {
+            resolve(null);
+            return;
+          }
+          resolve(currentSession);
+        },
+      );
+    });
+    const sessionUserId = Number(storedSession?.userId);
+
+    if (!Number.isFinite(sessionUserId)) {
       socket.close();
       return;
     }
 
-    if (!activeSessionId || !cookieSessionId || cookieSessionId !== activeSessionId) {
+    if (Number.isFinite(requestedUserId) && requestedUserId !== sessionUserId) {
+      socket.close(4001, "Unauthorized");
+      return;
+    }
+
+    const userId = sessionUserId;
+    const activeSessionId = activeSessionByUserId.get(userId);
+    if (!activeSessionId) {
+      activeSessionByUserId.set(userId, cookieSessionId);
+    } else if (cookieSessionId !== activeSessionId) {
       socket.close(4001, "Unauthorized");
       return;
     }
@@ -643,27 +706,13 @@ export async function registerRoutes(
     });
   });
 
-  // Session middleware
-  app.use(
-    session({
-      secret: process.env.SESSION_SECRET || "your-secret-key",
-      resave: false,
-      saveUninitialized: false,
-      proxy: isProduction,
-      cookie: {
-        httpOnly: true,
-        secure: sessionCookieSecure,
-        sameSite: sessionCookieSameSite,
-        maxAge: 1000 * 60 * 60 * 24 * 7, // 7 days
-      },
-    })
-  );
-
   // Auth middleware to attach user to request
   app.use((req, res, next) => {
     if (req.session.userId) {
       const activeSessionId = activeSessionByUserId.get(req.session.userId);
-      if (activeSessionId && activeSessionId !== req.sessionID) {
+      if (!activeSessionId) {
+        activeSessionByUserId.set(req.session.userId, req.sessionID);
+      } else if (activeSessionId !== req.sessionID) {
         req.session.destroy(() => {
           // ignore destroy errors
         });
@@ -2202,13 +2251,11 @@ export async function registerRoutes(
       await pushUnreadUpdate(req.user.id);
       await pushUnreadUpdate(input.toUserId);
       if (!shouldSuppressDirectNotification) {
-        await emitNotification([input.toUserId], {
+        await sendPushOnly([input.toUserId], {
           title: "New Message",
           description: `${req.user.name} sent you a message.`,
-          actorUserId: req.user.id,
-          type: "chat_message",
-          entityType: "chat",
-          entityId: req.user.id,
+          url: `/chat?userId=${req.user.id}`,
+          tag: "chat_message",
         });
       }
       res.status(201).json(message);
@@ -2221,6 +2268,78 @@ export async function registerRoutes(
       }
       throw err;
     }
+  });
+
+  app.patch(api.chats.update.path, async (req, res) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+
+    try {
+      const messageId = Number(req.params.messageId);
+      if (!Number.isFinite(messageId)) {
+        return res.status(400).json({ message: "Invalid message id" });
+      }
+
+      const input = api.chats.update.input.parse(req.body);
+      const message = await storage.getMessage(messageId);
+      if (!message) {
+        return res.status(404).json({ message: "Message not found" });
+      }
+      if (message.fromUserId !== req.user.id) {
+        return res.status(403).json({ message: "Only the sender can edit this message" });
+      }
+
+      const updated = await storage.updateMessage(messageId, input.content);
+      emitToUser(message.fromUserId, {
+        type: "message:updated",
+        payload: { messageId, fromUserId: message.fromUserId, toUserId: message.toUserId },
+      });
+      emitToUser(message.toUserId, {
+        type: "message:updated",
+        payload: { messageId, fromUserId: message.fromUserId, toUserId: message.toUserId },
+      });
+      res.json(updated);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({
+          message: err.errors[0].message,
+          field: err.errors[0].path.join("."),
+        });
+      }
+      throw err;
+    }
+  });
+
+  app.delete(api.chats.delete.path, async (req, res) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const messageId = Number(req.params.messageId);
+    if (!Number.isFinite(messageId)) {
+      return res.status(400).json({ message: "Invalid message id" });
+    }
+
+    const message = await storage.getMessage(messageId);
+    if (!message) {
+      return res.status(404).json({ message: "Message not found" });
+    }
+    if (message.fromUserId !== req.user.id) {
+      return res.status(403).json({ message: "Only the sender can delete this message" });
+    }
+
+    await storage.deleteMessage(messageId);
+    emitToUser(message.fromUserId, {
+      type: "message:deleted",
+      payload: { messageId, fromUserId: message.fromUserId, toUserId: message.toUserId },
+    });
+    emitToUser(message.toUserId, {
+      type: "message:deleted",
+      payload: { messageId, fromUserId: message.fromUserId, toUserId: message.toUserId },
+    });
+    await pushUnreadUpdate(message.fromUserId);
+    await pushUnreadUpdate(message.toUserId);
+    res.json({ success: true });
   });
 
   app.get(api.chats.groups.path, async (req, res) => {
@@ -2397,23 +2516,19 @@ export async function registerRoutes(
         return !isUserViewingTaskGroup(participantId, taskId);
       });
       if (notificationRecipients.length > 0) {
-        await emitNotification(notificationRecipients, {
+        await sendPushOnly(notificationRecipients, {
           title: "New Group Message",
           description: `${req.user.name} sent a message in "${task.title}".`,
-          actorUserId: req.user.id,
-          type: "task_group_message",
-          entityType: "task",
-          entityId: taskId,
+          url: `/chat?taskId=${taskId}`,
+          tag: "task_group_message",
         });
       }
       if (mentionRecipients.size > 0) {
-        await emitNotification(mentionRecipients, {
+        await sendPushOnly(mentionRecipients, {
           title: "You were mentioned",
           description: `${req.user.name} mentioned you in "${task.title}".`,
-          actorUserId: req.user.id,
-          type: "task_group_mention",
-          entityType: "task",
-          entityId: taskId,
+          url: `/chat?taskId=${taskId}`,
+          tag: "task_group_mention",
         });
       }
 
@@ -2427,6 +2542,109 @@ export async function registerRoutes(
       }
       throw err;
     }
+  });
+
+  app.patch(api.chats.groupUpdate.path, async (req, res) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const taskId = Number(req.params.taskId);
+    const messageId = Number(req.params.messageId);
+    if (!Number.isFinite(taskId)) {
+      return res.status(400).json({ message: "Invalid task id" });
+    }
+    if (!Number.isFinite(messageId)) {
+      return res.status(400).json({ message: "Invalid message id" });
+    }
+
+    const task = await storage.getTask(taskId);
+    if (!task) {
+      return res.status(404).json({ message: "Task not found" });
+    }
+    if (task.status === "done" || task.status === "trash") {
+      return res.status(404).json({ message: "Task group not available for completed or trashed tasks" });
+    }
+    if (!canUserAccessTask(req.user, task)) {
+      return res.status(403).json({ message: "Not authorized to manage this task group" });
+    }
+    const existingGroup = await storage.getTaskChatGroup(taskId);
+    if (!existingGroup) {
+      return res.status(404).json({ message: "Task group not found" });
+    }
+
+    const message = await storage.getTaskGroupMessage(messageId);
+    if (!message || message.taskId !== taskId) {
+      return res.status(404).json({ message: "Message not found" });
+    }
+    if (message.fromUserId !== req.user.id) {
+      return res.status(403).json({ message: "Only the sender can edit this message" });
+    }
+
+    try {
+      const input = api.chats.groupUpdate.input.parse(req.body);
+      const updated = await storage.updateTaskGroupMessage(messageId, input.content);
+      getTaskParticipantIds(task).forEach((participantId) => {
+        emitToUser(participantId, {
+          type: "task-group:updated",
+          payload: { taskId, messageId, fromUserId: message.fromUserId },
+        });
+      });
+      res.json(updated);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({
+          message: err.errors[0].message,
+          field: err.errors[0].path.join("."),
+        });
+      }
+      throw err;
+    }
+  });
+
+  app.delete(api.chats.groupDelete.path, async (req, res) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const taskId = Number(req.params.taskId);
+    const messageId = Number(req.params.messageId);
+    if (!Number.isFinite(taskId)) {
+      return res.status(400).json({ message: "Invalid task id" });
+    }
+    if (!Number.isFinite(messageId)) {
+      return res.status(400).json({ message: "Invalid message id" });
+    }
+
+    const task = await storage.getTask(taskId);
+    if (!task) {
+      return res.status(404).json({ message: "Task not found" });
+    }
+    if (task.status === "done" || task.status === "trash") {
+      return res.status(404).json({ message: "Task group not available for completed or trashed tasks" });
+    }
+    if (!canUserAccessTask(req.user, task)) {
+      return res.status(403).json({ message: "Not authorized to manage this task group" });
+    }
+    const existingGroup = await storage.getTaskChatGroup(taskId);
+    if (!existingGroup) {
+      return res.status(404).json({ message: "Task group not found" });
+    }
+
+    const message = await storage.getTaskGroupMessage(messageId);
+    if (!message || message.taskId !== taskId) {
+      return res.status(404).json({ message: "Message not found" });
+    }
+    if (message.fromUserId !== req.user.id) {
+      return res.status(403).json({ message: "Only the sender can delete this message" });
+    }
+
+    await storage.deleteTaskGroupMessage(messageId);
+    getTaskParticipantIds(task).forEach((participantId) => {
+      emitToUser(participantId, {
+        type: "task-group:deleted",
+        payload: { taskId, messageId },
+      });
+    });
+    res.json({ success: true });
   });
 
   app.post(api.chats.groupMarkRead.path, async (req, res) => {

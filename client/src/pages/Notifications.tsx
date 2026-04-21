@@ -3,7 +3,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { useDeleteNotification, useMarkAllNotificationsRead, useMarkNotificationRead, useNotifications } from "@/hooks/use-notifications";
 import { Loader2, Trash2 } from "lucide-react";
 import { deleteLocalNotification, markAllLocalNotificationsRead, markLocalNotificationRead } from "@/lib/local-notifications";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 function formatDate(value: unknown): string {
   const date = value ? new Date(value as any) : null;
@@ -17,6 +17,28 @@ export default function Notifications() {
   const markAllRead = useMarkAllNotificationsRead();
   const deleteNotification = useDeleteNotification();
   const [isClearing, setIsClearing] = useState(false);
+  const isLocalNotification = (notification: any) =>
+    notification?.local === true || typeof notification.id === "string";
+  const unreadCount = (notifications || []).filter((n: any) => !n.readAt).length;
+  const hasNotifications = (notifications || []).length > 0;
+
+  useEffect(() => {
+    if (isLoading || unreadCount === 0) return;
+
+    const hasLocalUnread = (notifications || []).some(
+      (notification: any) => isLocalNotification(notification) && !notification.readAt,
+    );
+    const hasServerUnread = (notifications || []).some(
+      (notification: any) => !isLocalNotification(notification) && !notification.readAt,
+    );
+
+    if (hasLocalUnread) {
+      markAllLocalNotificationsRead();
+    }
+    if (hasServerUnread && !markAllRead.isPending) {
+      markAllRead.mutate();
+    }
+  }, [isLoading, markAllRead, notifications, unreadCount]);
 
   if (isLoading) {
     return (
@@ -25,11 +47,6 @@ export default function Notifications() {
       </div>
     );
   }
-
-  const unreadCount = (notifications || []).filter((n: any) => !n.readAt).length;
-  const hasNotifications = (notifications || []).length > 0;
-  const isLocalNotification = (notification: any) =>
-    notification?.local === true || typeof notification.id === "string";
 
   const handleClearAll = async () => {
     if (!hasNotifications) return;

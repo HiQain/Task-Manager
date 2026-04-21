@@ -2,15 +2,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ChevronDown, ChevronLeft, ChevronRight, CornerUpLeft, Download, Eye, FileText, Forward, Loader2, Paperclip, Phone, Search, Send, X } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, CornerUpLeft, Download, Eye, FileText, Forward, Loader2, MoreHorizontal, Paperclip, Pencil, Phone, Search, Send, Trash2, X } from "lucide-react";
 import { useCall } from "@/components/CallProvider";
 import { useAuth } from "@/hooks/use-auth";
-import { useChatUsers, useMarkChatRead, useMarkTaskGroupRead, useMessages, useSendAnyMessage, useSendMessage, useSendTaskGroupMessage, useSendTaskGroupMessageToTask, useTaskGroupMessages, useTaskGroupUnreadCounts, useTaskGroups, useUnreadCounts } from "@/hooks/use-chat";
+import { useChatUsers, useDeleteMessage, useDeleteTaskGroupMessage, useMarkChatRead, useMarkTaskGroupRead, useMessages, useSendAnyMessage, useSendMessage, useSendTaskGroupMessage, useSendTaskGroupMessageToTask, useTaskGroupMessages, useTaskGroupUnreadCounts, useTaskGroups, useUnreadCounts, useUpdateMessage, useUpdateTaskGroupMessage } from "@/hooks/use-chat";
 import { useUsers } from "@/hooks/use-users";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
 import { useTasks } from "@/hooks/use-tasks";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -46,9 +47,12 @@ type ForwardTarget = {
 };
 
 const CHAT_ATTACHMENT_PREFIX = "__CHAT_ATTACHMENTS_V1__:";
-const MAX_CHAT_ATTACHMENTS = 2;
-const MAX_CHAT_ATTACHMENT_BYTES = 220 * 1024;
-const MAX_CHAT_MESSAGE_CHARS = 850000;
+const MAX_CHAT_ATTACHMENTS = 10;
+const MAX_CHAT_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+const MAX_CHAT_TOTAL_ATTACHMENT_BYTES = 40 * 1024 * 1024;
+const MAX_CHAT_MESSAGE_CHARS = 60_000_000;
+const MAX_CHAT_ATTACHMENT_LABEL = `${Math.round(MAX_CHAT_ATTACHMENT_BYTES / (1024 * 1024))} MB`;
+const MAX_CHAT_TOTAL_ATTACHMENT_LABEL = `${Math.round(MAX_CHAT_TOTAL_ATTACHMENT_BYTES / (1024 * 1024))} MB`;
 
 function isPdfAttachment(attachment: { name: string; type: string }) {
   return attachment.type === "application/pdf" || attachment.name.toLowerCase().endsWith(".pdf");
@@ -67,6 +71,10 @@ function formatAttachmentSize(bytes?: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function getChatAttachmentTotalBytes(attachments: ChatAttachment[]) {
+  return attachments.reduce((total, attachment) => total + Math.max(0, Number(attachment.size) || 0), 0);
 }
 
 function decodeMessagePayload(rawContent: unknown): {
@@ -490,11 +498,22 @@ export default function Chat() {
 
   const { data: messages, isLoading: isMessagesLoading } = useMessages(activeUserId);
   const sendMessage = useSendMessage(activeUserId);
+  const updateMessage = useUpdateMessage(activeUserId);
+  const deleteMessage = useDeleteMessage(activeUserId);
   const sendAnyMessage = useSendAnyMessage();
   const { data: taskGroupMessages, isLoading: isTaskGroupMessagesLoading } = useTaskGroupMessages(activeTaskGroupId);
   const sendTaskGroupMessage = useSendTaskGroupMessage(activeTaskGroupId);
+  const updateTaskGroupMessage = useUpdateTaskGroupMessage(activeTaskGroupId);
+  const deleteTaskGroupMessage = useDeleteTaskGroupMessage(activeTaskGroupId);
   const sendTaskGroupMessageToTask = useSendTaskGroupMessageToTask();
   const [replyTarget, setReplyTarget] = useState<MessageReference | null>(null);
+  const [editingMessage, setEditingMessage] = useState<{
+    messageId: number;
+    scope: "direct" | "task";
+    reference: MessageReference;
+    replyTo: MessageReference | null;
+    forwardedFrom: MessageReference | null;
+  } | null>(null);
   const [forwardMessage, setForwardMessage] = useState<{
     text: string;
     attachments: ChatAttachment[];
@@ -502,8 +521,21 @@ export default function Chat() {
     reference: MessageReference;
   } | null>(null);
   const [forwardSearch, setForwardSearch] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<{
+    messageId: number;
+    scope: "direct" | "task";
+    preview: string;
+  } | null>(null);
 
   const handleSelectTaskGroup = (taskId: number) => {
+    if (editingMessage) {
+      setDraft("");
+      setDraftAttachments([]);
+      setEditingMessage(null);
+    }
+    setReplyTarget(null);
+    setMentionQuery("");
+    setIsMentionOpen(false);
     setActiveTaskGroupId(taskId);
     setActiveUserId(undefined);
     setLocation(`/chat?taskId=${taskId}`);
@@ -704,6 +736,9 @@ export default function Chat() {
   const displayedMessages = isGroupMode ? (taskGroupMessages || []) : (messages || []);
   const isDisplayedMessagesLoading = isGroupMode ? isTaskGroupMessagesLoading : isMessagesLoading;
   const sendPending = isGroupMode ? sendTaskGroupMessage.isPending : sendMessage.isPending;
+  const updatePending = updateMessage.isPending || updateTaskGroupMessage.isPending;
+  const submitPending = sendPending || updatePending;
+  const deletePending = deleteMessage.isPending || deleteTaskGroupMessage.isPending;
   const isForwardPending = sendAnyMessage.isPending || sendTaskGroupMessageToTask.isPending;
   const displayedMessagesWithParsed = useMemo(
     () => displayedMessages.map((msg) => ({ msg, parsed: decodeMessagePayload(msg.content) })),
@@ -738,11 +773,11 @@ export default function Chat() {
   }, [forwardSearch, teamMembers, filteredTaskGroups]);
 
   const handleSend = async () => {
-    if (sendPending) return;
+    if (submitPending) return;
 
     const content = draft.trim();
     if (!content && draftAttachments.length === 0) return;
-    if (!isGroupMode && isDeletedChatUser(activeUser)) {
+    if (!editingMessage && !isGroupMode && isDeletedChatUser(activeUser)) {
       toast({
         title: "User deleted",
         description: "You cannot send new messages to a deleted user.",
@@ -751,7 +786,12 @@ export default function Chat() {
       return;
     }
     try {
-      const encodedContent = encodeMessagePayload(content, draftAttachments, { replyTo: replyTarget });
+      const encodedContent = editingMessage
+        ? encodeMessagePayload(content, draftAttachments, {
+          replyTo: editingMessage.replyTo,
+          forwardedFrom: editingMessage.forwardedFrom,
+        })
+        : encodeMessagePayload(content, draftAttachments, { replyTo: replyTarget });
       if (encodedContent.length > MAX_CHAT_MESSAGE_CHARS) {
         toast({
           title: "Message too large",
@@ -760,7 +800,17 @@ export default function Chat() {
         });
         return;
       }
-      if (isGroupMode && activeTaskGroupId) {
+
+      if (editingMessage) {
+        if (editingMessage.scope === "task") {
+          if (!activeTaskGroupId) return;
+          await updateTaskGroupMessage.mutateAsync({ messageId: editingMessage.messageId, content: encodedContent });
+        } else {
+          if (!activeUserId) return;
+          await updateMessage.mutateAsync({ messageId: editingMessage.messageId, content: encodedContent });
+        }
+        toast({ title: "Message updated", description: "Changes saved successfully." });
+      } else if (isGroupMode && activeTaskGroupId) {
         await sendTaskGroupMessage.mutateAsync({ content: encodedContent });
       } else if (activeUserId) {
         await sendMessage.mutateAsync({ toUserId: activeUserId, content: encodedContent });
@@ -772,20 +822,33 @@ export default function Chat() {
       setMentionQuery("");
       setIsMentionOpen(false);
       setReplyTarget(null);
+      setEditingMessage(null);
       stopTyping(activeUserId);
       requestAnimationFrame(() => {
         draftInputRef.current?.focus();
       });
     } catch (error) {
       toast({
-        title: "Message send failed",
-        description: error instanceof Error ? error.message : "Unable to send message",
+        title: editingMessage ? "Message update failed" : "Message send failed",
+        description: error instanceof Error
+          ? error.message
+          : editingMessage
+            ? "Unable to update message"
+            : "Unable to send message",
         variant: "destructive",
       });
     }
   };
 
   const handleSelectUser = async (userId: number) => {
+    if (editingMessage) {
+      setDraft("");
+      setDraftAttachments([]);
+      setEditingMessage(null);
+    }
+    setReplyTarget(null);
+    setMentionQuery("");
+    setIsMentionOpen(false);
     setActiveUserId(userId);
     setActiveTaskGroupId(undefined);
     setLocation(`/chat?userId=${userId}`);
@@ -798,9 +861,16 @@ export default function Chat() {
 
   const clearActiveConversation = () => {
     stopTyping(activeUserId);
+    if (editingMessage) {
+      setDraft("");
+      setDraftAttachments([]);
+    }
     setActiveUserId(undefined);
     setActiveTaskGroupId(undefined);
     setReplyTarget(null);
+    setEditingMessage(null);
+    setMentionQuery("");
+    setIsMentionOpen(false);
     setLocation("/chat");
   };
 
@@ -818,7 +888,46 @@ export default function Chat() {
   }, [allKnownUsers, user?.id]);
 
   const handleReplyToMessage = (message: any) => {
+    if (editingMessage) {
+      setEditingMessage(null);
+      setDraft("");
+      setDraftAttachments([]);
+    }
     setReplyTarget(buildMessageReference(message));
+    requestAnimationFrame(() => {
+      draftInputRef.current?.focus();
+    });
+  };
+
+  const handleEditMessage = (message: any) => {
+    const parsed = decodeMessagePayload(message.content);
+    const reference = buildMessageReference(message);
+    setEditingMessage({
+      messageId: message.id,
+      scope: isGroupMode ? "task" : "direct",
+      reference,
+      replyTo: parsed.replyTo,
+      forwardedFrom: parsed.forwardedFrom,
+    });
+    setReplyTarget(null);
+    setDraft(parsed.text);
+    setDraftAttachments(parsed.attachments);
+    setMentionQuery("");
+    setIsMentionOpen(false);
+    requestAnimationFrame(() => {
+      if (!draftInputRef.current) return;
+      draftInputRef.current.focus();
+      const caretPosition = parsed.text.length;
+      draftInputRef.current.setSelectionRange(caretPosition, caretPosition);
+    });
+  };
+
+  const handleCancelEditMessage = () => {
+    setEditingMessage(null);
+    setDraft("");
+    setDraftAttachments([]);
+    setMentionQuery("");
+    setIsMentionOpen(false);
     requestAnimationFrame(() => {
       draftInputRef.current?.focus();
     });
@@ -952,7 +1061,15 @@ export default function Chat() {
           if (!compressed) {
             toast({
               title: "Image too large",
-              description: `${file.name} could not be compressed under ${Math.floor(MAX_CHAT_ATTACHMENT_BYTES / 1024)}KB.`,
+              description: `${file.name} could not be compressed under ${MAX_CHAT_ATTACHMENT_LABEL}.`,
+              variant: "destructive",
+            });
+            continue;
+          }
+          if (getChatAttachmentTotalBytes(nextItems) + compressed.bytes > MAX_CHAT_TOTAL_ATTACHMENT_BYTES) {
+            toast({
+              title: "Attachment total exceeded",
+              description: `One message can include up to ${MAX_CHAT_TOTAL_ATTACHMENT_LABEL} of attachments total.`,
               variant: "destructive",
             });
             continue;
@@ -969,7 +1086,16 @@ export default function Chat() {
         if (file.size > MAX_CHAT_ATTACHMENT_BYTES) {
           toast({
             title: "File too large",
-            description: `${file.name} exceeds ${Math.floor(MAX_CHAT_ATTACHMENT_BYTES / 1024)}KB limit.`,
+            description: `${file.name} exceeds the ${MAX_CHAT_ATTACHMENT_LABEL} per-file limit.`,
+            variant: "destructive",
+          });
+          continue;
+        }
+
+        if (getChatAttachmentTotalBytes(nextItems) + file.size > MAX_CHAT_TOTAL_ATTACHMENT_BYTES) {
+          toast({
+            title: "Attachment total exceeded",
+            description: `One message can include up to ${MAX_CHAT_TOTAL_ATTACHMENT_LABEL} of attachments total.`,
             variant: "destructive",
           });
           continue;
@@ -999,6 +1125,43 @@ export default function Chat() {
 
   const removeDraftAttachment = (index: number) => {
     setDraftAttachments((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleDeleteSelectedMessage = async () => {
+    if (!deleteTarget) return;
+
+    try {
+      if (deleteTarget.scope === "task") {
+        if (!activeTaskGroupId) {
+          throw new Error("Task group is no longer open.");
+        }
+        await deleteTaskGroupMessage.mutateAsync(deleteTarget.messageId);
+      } else {
+        if (!activeUserId) {
+          throw new Error("Chat is no longer open.");
+        }
+        await deleteMessage.mutateAsync(deleteTarget.messageId);
+      }
+
+      setReplyTarget((current) => (current?.messageId === deleteTarget.messageId ? null : current));
+      setForwardMessage((current) => (current?.reference.messageId === deleteTarget.messageId ? null : current));
+      if (editingMessage?.messageId === deleteTarget.messageId) {
+        setEditingMessage(null);
+        setDraft("");
+        setDraftAttachments([]);
+      }
+      setDeleteTarget(null);
+      toast({
+        title: "Message deleted",
+        description: "The message has been removed from chat.",
+      });
+    } catch (error) {
+      toast({
+        title: "Delete failed",
+        description: error instanceof Error ? error.message : "Unable to delete message.",
+        variant: "destructive",
+      });
+    }
   };
 
   const activePresence = activeUserId ? presenceByUserId[activeUserId] : undefined;
@@ -1207,33 +1370,63 @@ export default function Chat() {
             displayedMessagesWithParsed.map(({ msg, parsed }) => {
               const mine = msg.fromUserId === user?.id;
               const sender = allKnownUsers.find((u) => u.id === msg.fromUserId);
-              const actionButtons = (
-                <div className="flex shrink-0 items-center gap-1 self-start sm:opacity-0 sm:pointer-events-none sm:transition-opacity sm:duration-150 sm:group-hover:opacity-100 sm:group-hover:pointer-events-auto sm:group-focus-within:opacity-100 sm:group-focus-within:pointer-events-auto">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 rounded-full bg-background/95 shadow-sm"
-                    onClick={() => handleReplyToMessage(msg)}
-                    aria-label="Reply to message"
-                  >
-                    <CornerUpLeft className="h-3.5 w-3.5" />
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 rounded-full bg-background/95 shadow-sm"
-                    onClick={() => handleForwardMessage(msg)}
-                    aria-label="Forward message"
-                  >
-                    <Forward className="h-3.5 w-3.5" />
-                  </Button>
+              const messageReference = buildMessageReference(msg);
+              const actionMenu = (
+                <div className="shrink-0 self-start">
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 rounded-full bg-background/95 shadow-sm sm:opacity-0 sm:pointer-events-none sm:transition-opacity sm:duration-150 sm:group-hover:opacity-100 sm:group-hover:pointer-events-auto sm:group-focus-within:opacity-100 sm:group-focus-within:pointer-events-auto"
+                        aria-label="Message actions"
+                      >
+                        <MoreHorizontal className="h-3.5 w-3.5" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align={mine ? "end" : "start"} side="top" className="w-40">
+                      <DropdownMenuItem onClick={() => handleReplyToMessage(msg)}>
+                        <CornerUpLeft className="mr-2 h-3.5 w-3.5" />
+                        Reply
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => handleForwardMessage(msg)}>
+                        <Forward className="mr-2 h-3.5 w-3.5" />
+                        Forward
+                      </DropdownMenuItem>
+                      {mine && (
+                        <>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            disabled={updatePending || deletePending}
+                            onClick={() => handleEditMessage(msg)}
+                          >
+                            <Pencil className="mr-2 h-3.5 w-3.5" />
+                            Edit
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            className="text-destructive focus:text-destructive"
+                            disabled={deletePending || updatePending}
+                            onClick={() =>
+                              setDeleteTarget({
+                                messageId: msg.id,
+                                scope: isGroupMode ? "task" : "direct",
+                                preview: summarizeMessageReference(messageReference),
+                              })
+                            }
+                          >
+                            <Trash2 className="mr-2 h-3.5 w-3.5" />
+                            Delete
+                          </DropdownMenuItem>
+                        </>
+                      )}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </div>
               );
               return (
                 <div key={msg.id} className={`group flex w-full items-start gap-2 ${mine ? "justify-end" : "justify-start"}`}>
-                  {mine && actionButtons}
+                  {mine && actionMenu}
                   <div
                     className={`relative max-w-[85%] md:max-w-[70%] rounded-2xl px-3 py-2 border ${mine
                       ? "bg-primary text-primary-foreground border-primary/30"
@@ -1347,7 +1540,7 @@ export default function Chat() {
                       {msg.createdAt ? new Date(msg.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
                     </p>
                   </div>
-                  {!mine && actionButtons}
+                  {!mine && actionMenu}
                 </div>
               );
             })
@@ -1410,13 +1603,34 @@ export default function Chat() {
               type="button"
               variant="outline"
               className="h-11 px-3"
-              disabled={!showConversationPanel || isActiveUserDeleted || sendPending}
+              disabled={!showConversationPanel || (!editingMessage && isActiveUserDeleted) || submitPending}
               onClick={() => attachmentInputRef.current?.click()}
             >
               <Paperclip className="w-4 h-4" />
             </Button>
             <div className="relative flex-1">
-              {replyTarget && (
+              {editingMessage ? (
+                <div className="mb-2 flex items-start justify-between gap-3 rounded-md border border-primary/20 bg-primary/5 px-3 py-2">
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-primary/80">
+                      Editing message
+                    </p>
+                    <p className="truncate text-xs text-foreground">
+                      {summarizeMessageReference(editingMessage.reference)}
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 shrink-0"
+                    onClick={handleCancelEditMessage}
+                    aria-label="Cancel edit"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              ) : replyTarget ? (
                 <div className="mb-2 flex items-start justify-between gap-3 rounded-md border border-border bg-background px-3 py-2">
                   <div className="min-w-0">
                     <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -1437,7 +1651,7 @@ export default function Chat() {
                     <X className="h-3.5 w-3.5" />
                   </Button>
                 </div>
-              )}
+              ) : null}
               <Input
                 ref={draftInputRef}
                 value={draft}
@@ -1455,8 +1669,16 @@ export default function Chat() {
                     void handleAttachmentSelect(files);
                   }
                 }}
-                placeholder={showConversationPanel ? (isActiveUserDeleted ? "This user is deleted (read-only chat)" : "Type a message...") : "Select user or task group first"}
-                disabled={!showConversationPanel || isActiveUserDeleted || sendPending}
+                placeholder={
+                  showConversationPanel
+                    ? editingMessage
+                      ? "Edit your message..."
+                      : isActiveUserDeleted
+                        ? "This user is deleted (read-only chat)"
+                        : "Type a message..."
+                    : "Select user or task group first"
+                }
+                disabled={!showConversationPanel || (!editingMessage && isActiveUserDeleted) || submitPending}
                 className="h-11"
               />
             </div>
@@ -1492,10 +1714,10 @@ export default function Chat() {
             )}
             <Button
               type="submit"
-              disabled={!showConversationPanel || isActiveUserDeleted || (!draft.trim() && draftAttachments.length === 0) || sendPending}
-              className="h-11 px-4"
+              disabled={!showConversationPanel || (!editingMessage && isActiveUserDeleted) || (!draft.trim() && draftAttachments.length === 0) || submitPending}
+              className="h-11 min-w-[76px] px-4"
             >
-              {sendPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+              {submitPending ? <Loader2 className="w-4 h-4 animate-spin" /> : editingMessage ? "Save" : <Send className="w-4 h-4" />}
             </Button>
           </form>
         </div>
@@ -1605,6 +1827,34 @@ export default function Chat() {
             </AlertDialogCancel>
             <AlertDialogAction onClick={() => resolveDuplicateChoice("replace")}>
               Upload New
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => (!open ? setDeleteTarget(null) : undefined)}>
+        <AlertDialogContent className="fixed !top-1/2 !left-1/2 w-[calc(100vw-2rem)] max-w-md !-translate-x-1/2 !-translate-y-1/2">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Message?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will remove the message for everyone in this chat.
+              {deleteTarget?.preview ? ` "${deleteTarget.preview}"` : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deletePending}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault();
+                void handleDeleteSelectedMessage();
+              }}
+              disabled={deletePending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deletePending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Delete
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

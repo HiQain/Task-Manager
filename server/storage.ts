@@ -112,6 +112,9 @@ export interface IStorage {
   getChatUsers(currentUserId: number): Promise<User[]>;
   getMessagesBetweenUsers(userId: number, otherUserId: number): Promise<Message[]>;
   createMessage(data: InsertMessage & { fromUserId: number }): Promise<Message>;
+  getMessage(id: number): Promise<Message | undefined>;
+  updateMessage(id: number, content: string): Promise<Message>;
+  deleteMessage(id: number): Promise<void>;
   getTaskChatGroup(taskId: number): Promise<TaskChatGroup | undefined>;
   ensureTaskChatGroup(taskId: number, createdById: number): Promise<TaskChatGroup>;
   getTaskComments(taskId: number): Promise<TaskComment[]>;
@@ -120,7 +123,10 @@ export interface IStorage {
   updateTaskComment(id: number, content: string): Promise<TaskComment>;
   getTaskChatGroups(): Promise<TaskChatGroup[]>;
   getTaskGroupMessages(taskId: number): Promise<TaskGroupMessage[]>;
+  getTaskGroupMessage(id: number): Promise<TaskGroupMessage | undefined>;
   createTaskGroupMessage(data: Pick<InsertTaskGroupMessage, "taskId" | "content"> & { fromUserId: number }): Promise<TaskGroupMessage>;
+  updateTaskGroupMessage(id: number, content: string): Promise<TaskGroupMessage>;
+  deleteTaskGroupMessage(id: number): Promise<void>;
   getTaskGroupReadState(userId: number, taskId: number): Promise<TaskGroupReadState | undefined>;
   upsertTaskGroupReadState(userId: number, taskId: number, lastReadAt?: Date): Promise<void>;
   createNotification(data: InsertNotification): Promise<Notification>;
@@ -558,6 +564,24 @@ export class DatabaseStorage implements IStorage {
     return message;
   }
 
+  async getMessage(id: number): Promise<Message | undefined> {
+    const [message] = await db.select().from(messages).where(eq(messages.id, id));
+    return message;
+  }
+
+  async updateMessage(id: number, content: string): Promise<Message> {
+    await db.update(messages).set({ content }).where(eq(messages.id, id));
+    const [message] = await db.select().from(messages).where(eq(messages.id, id));
+    if (!message) {
+      throw new Error("Failed to update message");
+    }
+    return message;
+  }
+
+  async deleteMessage(id: number): Promise<void> {
+    await db.delete(messages).where(eq(messages.id, id));
+  }
+
   async getTaskChatGroup(taskId: number): Promise<TaskChatGroup | undefined> {
     const [group] = await db.select().from(taskChatGroups).where(eq(taskChatGroups.taskId, taskId));
     return group;
@@ -586,6 +610,11 @@ export class DatabaseStorage implements IStorage {
       .from(taskGroupMessages)
       .where(eq(taskGroupMessages.taskId, taskId))
       .orderBy(asc(taskGroupMessages.createdAt));
+  }
+
+  async getTaskGroupMessage(id: number): Promise<TaskGroupMessage | undefined> {
+    const [message] = await db.select().from(taskGroupMessages).where(eq(taskGroupMessages.id, id));
+    return message;
   }
 
   async getTaskComments(taskId: number): Promise<TaskComment[]> {
@@ -644,6 +673,19 @@ export class DatabaseStorage implements IStorage {
       throw new Error("Failed to create task group message");
     }
     return message;
+  }
+
+  async updateTaskGroupMessage(id: number, content: string): Promise<TaskGroupMessage> {
+    await db.update(taskGroupMessages).set({ content }).where(eq(taskGroupMessages.id, id));
+    const [message] = await db.select().from(taskGroupMessages).where(eq(taskGroupMessages.id, id));
+    if (!message) {
+      throw new Error("Failed to update task group message");
+    }
+    return message;
+  }
+
+  async deleteTaskGroupMessage(id: number): Promise<void> {
+    await db.delete(taskGroupMessages).where(eq(taskGroupMessages.id, id));
   }
 
   async getTaskGroupReadState(userId: number, taskId: number): Promise<TaskGroupReadState | undefined> {

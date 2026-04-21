@@ -227,6 +227,27 @@ export const api = {
         401: errorSchemas.notFound,
       },
     },
+    update: {
+      method: 'PATCH' as const,
+      path: '/api/chats/messages/:messageId',
+      input: insertMessageSchema.pick({ content: true }),
+      responses: {
+        200: z.custom<typeof messages.$inferSelect>(),
+        400: errorSchemas.validation,
+        401: errorSchemas.notFound,
+        404: errorSchemas.notFound,
+      },
+    },
+    delete: {
+      method: 'DELETE' as const,
+      path: '/api/chats/messages/:messageId',
+      responses: {
+        200: z.object({ success: z.boolean() }),
+        400: errorSchemas.validation,
+        401: errorSchemas.notFound,
+        404: errorSchemas.notFound,
+      },
+    },
     markRead: {
       method: 'POST' as const,
       path: '/api/chats/read/:userId',
@@ -297,6 +318,27 @@ export const api = {
       input: insertTaskGroupMessageSchema.pick({ content: true }),
       responses: {
         201: z.custom<typeof taskGroupMessages.$inferSelect>(),
+        400: errorSchemas.validation,
+        401: errorSchemas.notFound,
+        404: errorSchemas.notFound,
+      },
+    },
+    groupUpdate: {
+      method: 'PATCH' as const,
+      path: '/api/chats/groups/task/:taskId/messages/:messageId',
+      input: insertTaskGroupMessageSchema.pick({ content: true }),
+      responses: {
+        200: z.custom<typeof taskGroupMessages.$inferSelect>(),
+        400: errorSchemas.validation,
+        401: errorSchemas.notFound,
+        404: errorSchemas.notFound,
+      },
+    },
+    groupDelete: {
+      method: 'DELETE' as const,
+      path: '/api/chats/groups/task/:taskId/messages/:messageId',
+      responses: {
+        200: z.object({ success: z.boolean() }),
         400: errorSchemas.validation,
         401: errorSchemas.notFound,
         404: errorSchemas.notFound,

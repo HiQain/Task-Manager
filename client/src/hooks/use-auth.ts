@@ -22,23 +22,19 @@ export function useAuth(): AuthContextType {
     const { data: user, isLoading, error: fetchError } = useQuery({
         queryKey: ['auth', 'me'],
         queryFn: async () => {
-            try {
-                const res = await fetch(api.auth.me.path, {
-                    credentials: 'include',
-                });
-                if (!res.ok) {
-                    if (res.status === 401) {
-                        return null;
-                    }
-                    throw new Error('Failed to fetch user');
+            const res = await fetch(api.auth.me.path, {
+                credentials: 'include',
+            });
+            if (!res.ok) {
+                if (res.status === 401) {
+                    return null;
                 }
-                return res.json();
-            } catch (err) {
-                return null;
+                throw new Error('Failed to fetch user');
             }
+            return res.json();
         },
-        staleTime: 0,
-        refetchInterval: 2000,
+        staleTime: 60 * 1000,
+        refetchInterval: false,
         refetchOnWindowFocus: true,
         refetchOnReconnect: true,
         refetchOnMount: "always",

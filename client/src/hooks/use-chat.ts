@@ -104,6 +104,50 @@ export function useSendAnyMessage() {
   });
 }
 
+export function useUpdateMessage(activeUserId?: number) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (payload: { messageId: number; content: string }) => {
+      const validated = api.chats.update.input.parse({ content: payload.content });
+      const res = await fetch(buildUrl(api.chats.update.path, { messageId: payload.messageId }), {
+        method: api.chats.update.method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(validated),
+        credentials: "include",
+      });
+      const body = await readJsonOrThrow(res, "Failed to update message");
+      return api.chats.update.responses[200].parse(body);
+    },
+    onSuccess: () => {
+      if (activeUserId) {
+        queryClient.invalidateQueries({ queryKey: [api.chats.list.path, activeUserId] });
+      }
+    },
+  });
+}
+
+export function useDeleteMessage(activeUserId?: number) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (messageId: number) => {
+      const res = await fetch(buildUrl(api.chats.delete.path, { messageId }), {
+        method: api.chats.delete.method,
+        credentials: "include",
+      });
+      const body = await readJsonOrThrow(res, "Failed to delete message");
+      return api.chats.delete.responses[200].parse(body);
+    },
+    onSuccess: () => {
+      if (activeUserId) {
+        queryClient.invalidateQueries({ queryKey: [api.chats.list.path, activeUserId] });
+      }
+      queryClient.invalidateQueries({ queryKey: [api.chats.unread.path] });
+    },
+  });
+}
+
 export function useMarkChatRead() {
   const queryClient = useQueryClient();
 
@@ -248,6 +292,50 @@ export function useSendTaskGroupMessageToTask() {
     },
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["chat", "task-group", variables.taskId] });
+      queryClient.invalidateQueries({ queryKey: [api.chats.groupsUnread.path] });
+    },
+  });
+}
+
+export function useUpdateTaskGroupMessage(taskId?: number) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (payload: { messageId: number; content: string }) => {
+      const validated = api.chats.groupUpdate.input.parse({ content: payload.content });
+      const res = await fetch(buildUrl(api.chats.groupUpdate.path, { taskId: taskId!, messageId: payload.messageId }), {
+        method: api.chats.groupUpdate.method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(validated),
+        credentials: "include",
+      });
+      const body = await readJsonOrThrow(res, "Failed to update task group message");
+      return api.chats.groupUpdate.responses[200].parse(body);
+    },
+    onSuccess: () => {
+      if (taskId) {
+        queryClient.invalidateQueries({ queryKey: ["chat", "task-group", taskId] });
+      }
+    },
+  });
+}
+
+export function useDeleteTaskGroupMessage(taskId?: number) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (messageId: number) => {
+      const res = await fetch(buildUrl(api.chats.groupDelete.path, { taskId: taskId!, messageId }), {
+        method: api.chats.groupDelete.method,
+        credentials: "include",
+      });
+      const body = await readJsonOrThrow(res, "Failed to delete task group message");
+      return api.chats.groupDelete.responses[200].parse(body);
+    },
+    onSuccess: () => {
+      if (taskId) {
+        queryClient.invalidateQueries({ queryKey: ["chat", "task-group", taskId] });
+      }
       queryClient.invalidateQueries({ queryKey: [api.chats.groupsUnread.path] });
     },
   });

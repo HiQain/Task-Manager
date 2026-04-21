@@ -17,6 +17,33 @@ async function readJsonOrThrow(res: Response, fallbackMessage: string) {
   return body;
 }
 
+function markNotificationListItemRead(items: any[] | undefined, id: number, timestamp: string) {
+  if (!Array.isArray(items)) return { nextItems: items, unreadDelta: 0 };
+  let unreadDelta = 0;
+  const nextItems = items.map((item) => {
+    if (item?.id !== id || item?.readAt) return item;
+    unreadDelta = 1;
+    return { ...item, readAt: timestamp };
+  });
+  return { nextItems, unreadDelta };
+}
+
+function markAllNotificationListItemsRead(items: any[] | undefined, timestamp: string) {
+  if (!Array.isArray(items)) return items;
+  return items.map((item) => (item?.readAt ? item : { ...item, readAt: timestamp }));
+}
+
+function removeNotificationListItem(items: any[] | undefined, id: number) {
+  if (!Array.isArray(items)) return { nextItems: items, unreadDelta: 0 };
+  let unreadDelta = 0;
+  const nextItems = items.filter((item) => {
+    if (item?.id !== id) return true;
+    unreadDelta = item?.readAt ? 0 : 1;
+    return false;
+  });
+  return { nextItems, unreadDelta };
+}
+
 export function useNotifications() {
   const queryClient = useQueryClient();
 
@@ -88,6 +115,32 @@ export function useMarkNotificationRead() {
       });
       await readJsonOrThrow(res, "Failed to mark notification as read");
     },
+    onMutate: async (id) => {
+      await queryClient.cancelQueries({ queryKey: [api.notifications.list.path] });
+      await queryClient.cancelQueries({ queryKey: [api.notifications.unread.path] });
+
+      const previousList = queryClient.getQueryData<any[]>([api.notifications.list.path]);
+      const previousUnread = queryClient.getQueryData<{ count: number }>([api.notifications.unread.path]);
+      const timestamp = new Date().toISOString();
+      const { nextItems, unreadDelta } = markNotificationListItemRead(previousList, id, timestamp);
+
+      queryClient.setQueryData([api.notifications.list.path], nextItems);
+      if (unreadDelta > 0) {
+        queryClient.setQueryData([api.notifications.unread.path], {
+          count: Math.max(0, Number(previousUnread?.count || 0) - unreadDelta),
+        });
+      }
+
+      return { previousList, previousUnread };
+    },
+    onError: (_error, _id, context) => {
+      if (context?.previousList) {
+        queryClient.setQueryData([api.notifications.list.path], context.previousList);
+      }
+      if (context?.previousUnread) {
+        queryClient.setQueryData([api.notifications.unread.path], context.previousUnread);
+      }
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [api.notifications.list.path] });
       queryClient.invalidateQueries({ queryKey: [api.notifications.unread.path] });
@@ -105,6 +158,30 @@ export function useMarkAllNotificationsRead() {
       });
       await readJsonOrThrow(res, "Failed to mark all notifications as read");
     },
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey: [api.notifications.list.path] });
+      await queryClient.cancelQueries({ queryKey: [api.notifications.unread.path] });
+
+      const previousList = queryClient.getQueryData<any[]>([api.notifications.list.path]);
+      const previousUnread = queryClient.getQueryData<{ count: number }>([api.notifications.unread.path]);
+      const timestamp = new Date().toISOString();
+
+      queryClient.setQueryData(
+        [api.notifications.list.path],
+        markAllNotificationListItemsRead(previousList, timestamp),
+      );
+      queryClient.setQueryData([api.notifications.unread.path], { count: 0 });
+
+      return { previousList, previousUnread };
+    },
+    onError: (_error, _variables, context) => {
+      if (context?.previousList) {
+        queryClient.setQueryData([api.notifications.list.path], context.previousList);
+      }
+      if (context?.previousUnread) {
+        queryClient.setQueryData([api.notifications.unread.path], context.previousUnread);
+      }
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [api.notifications.list.path] });
       queryClient.invalidateQueries({ queryKey: [api.notifications.unread.path] });
@@ -121,6 +198,31 @@ export function useDeleteNotification() {
         credentials: "include",
       });
       await readJsonOrThrow(res, "Failed to delete notification");
+    },
+    onMutate: async (id) => {
+      await queryClient.cancelQueries({ queryKey: [api.notifications.list.path] });
+      await queryClient.cancelQueries({ queryKey: [api.notifications.unread.path] });
+
+      const previousList = queryClient.getQueryData<any[]>([api.notifications.list.path]);
+      const previousUnread = queryClient.getQueryData<{ count: number }>([api.notifications.unread.path]);
+      const { nextItems, unreadDelta } = removeNotificationListItem(previousList, id);
+
+      queryClient.setQueryData([api.notifications.list.path], nextItems);
+      if (unreadDelta > 0) {
+        queryClient.setQueryData([api.notifications.unread.path], {
+          count: Math.max(0, Number(previousUnread?.count || 0) - unreadDelta),
+        });
+      }
+
+      return { previousList, previousUnread };
+    },
+    onError: (_error, _id, context) => {
+      if (context?.previousList) {
+        queryClient.setQueryData([api.notifications.list.path], context.previousList);
+      }
+      if (context?.previousUnread) {
+        queryClient.setQueryData([api.notifications.unread.path], context.previousUnread);
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [api.notifications.list.path] });

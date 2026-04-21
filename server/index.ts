@@ -18,7 +18,7 @@ declare module "http" {
 
 app.use(
   express.json({
-    limit: "5mb",
+    limit: "70mb",
     verify: (req, _res, buf) => {
       req.rawBody = buf;
     },

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ClipboardEvent, type MouseEvent } from "react";
+import { useLayoutEffect, useRef, useState, type ClipboardEvent, type MouseEvent } from "react";
 import { Bold, Italic, Link as LinkIcon, List, ListOrdered, Underline } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -43,7 +43,7 @@ export function RichTextEditor({
   minHeight = "120px",
 }: RichTextEditorProps) {
   const editorRef = useRef<HTMLDivElement | null>(null);
-  const lastLocalValueRef = useRef(value || "");
+  const lastLocalValueRef = useRef("");
   const lastLocalAttachmentsSignatureRef = useRef("");
   const [isFocused, setIsFocused] = useState(false);
   const [isEmpty, setIsEmpty] = useState(!value);
@@ -62,7 +62,7 @@ export function RichTextEditor({
       )
       .join("|");
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = editorRef.current;
     if (!el) return;
 
