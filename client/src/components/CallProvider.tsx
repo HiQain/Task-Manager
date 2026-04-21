@@ -1,15 +1,15 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Loader2, Maximize2, Mic, MicOff, Minimize2, Phone, PhoneOff, Presentation, ScreenShare, ScreenShareOff } from "lucide-react";
+import { Loader2, Maximize2, Mic, MicOff, Minimize2, Phone, PhoneOff, Presentation, ScreenShare, ScreenShareOff, UserPlus, Users } from "lucide-react";
 import { api } from "@shared/routes";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
 import { useUsers } from "@/hooks/use-users";
+import { withBasePath } from "@/lib/base-path";
 
-const PENDING_CALL_STORAGE_KEY = "pending_incoming_call_v1";
 const BROWSER_NOTIFICATIONS_PROMPT_KEY = "browser_notifications_prompted_v1";
 
 type CallContextValue = {
@@ -30,11 +30,33 @@ type CallContextValue = {
   toggleScreenShare: () => Promise<void>;
 };
 
+type IncomingCallState = {
+  fromUserId: number;
+  sdp: RTCSessionDescriptionInit;
+  sessionId: string;
+  participantIds: number[];
+};
+
+type PeerEntry = {
+  pc: RTCPeerConnection;
+  presentationSender: RTCRtpSender | null;
+};
+
 const CallContext = createContext<CallContextValue | null>(null);
 
 function setElementStream(element: HTMLMediaElement | null, stream: MediaStream | null) {
   if (!element) return;
   element.srcObject = stream;
+}
+
+function playMediaElement(element: HTMLMediaElement | null) {
+  if (!element) return;
+  const result = element.play();
+  if (result && typeof result.catch === "function") {
+    void result.catch(() => {
+      // Ignore autoplay restrictions until the next user gesture.
+    });
+  }
 }
 
 function getScreenShareLabel(label?: string | null) {
@@ -46,6 +68,18 @@ function formatCallDuration(seconds: number) {
   const mins = Math.floor(seconds / 60);
   const secs = seconds % 60;
   return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+}
+
+function buildSessionId() {
+  return globalThis.crypto?.randomUUID?.() || `call-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function isDeletedCallUser(userLike: { email?: string | null; name?: string | null; role?: string | null } | null | undefined) {
+  if (!userLike) return false;
+  const email = (userLike.email || "").toLowerCase();
+  const name = (userLike.name || "").toLowerCase();
+  const role = (userLike.role || "").toLowerCase();
+  return role === "deleted" || email.endsWith("@deleted.local") || name.includes("deleted user");
 }
 
 export function useCall() {
@@ -61,46 +95,82 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { data: users } = useUsers();
+
   const wsRef = useRef<WebSocket | null>(null);
-  const peerRef = useRef<RTCPeerConnection | null>(null);
-  const localStreamRef = useRef<MediaStream | null>(null);
-  const remoteStreamRef = useRef<MediaStream | null>(null);
+  const peerEntriesRef = useRef<Map<number, PeerEntry>>(new Map());
+  const queuedCandidatesByUserIdRef = useRef<Map<number, RTCIceCandidateInit[]>>(new Map());
+  const remoteAudioStreamsRef = useRef<Map<number, MediaStream>>(new Map());
+  const remoteAudioElementsRef = useRef<Map<number, HTMLAudioElement>>(new Map());
+  const remotePresentationStreamsRef = useRef<Map<number, MediaStream>>(new Map());
+  const remotePresenterLabelsRef = useRef<Map<number, string>>(new Map());
+  const sessionIdRef = useRef<string | null>(null);
+  const localAudioStreamRef = useRef<MediaStream | null>(null);
   const screenShareStreamRef = useRef<MediaStream | null>(null);
-  const remotePresentationStreamRef = useRef<MediaStream | null>(null);
-  const remotePresentationTrackRef = useRef<MediaStreamTrack | null>(null);
-  const presentationSenderRef = useRef<RTCRtpSender | null>(null);
-  const pendingOfferRef = useRef<RTCSessionDescriptionInit | null>(null);
-  const pendingOfferFromRef = useRef<number | null>(null);
-  const queuedCandidatesRef = useRef<RTCIceCandidateInit[]>([]);
-  const connectedPeerUserIdRef = useRef<number | null>(null);
-  const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
-  const localPresentationVideoRef = useRef<HTMLVideoElement | null>(null);
-  const remotePresentationVideoRef = useRef<HTMLVideoElement | null>(null);
-  const presentationStageRef = useRef<HTMLDivElement | null>(null);
+  const pendingInviteTimeoutsRef = useRef<Map<number, number>>(new Map());
+  const pendingInviteIdsRef = useRef<number[]>([]);
   const usersRef = useRef<Array<{ id: number; name: string }>>([]);
   const audioContextRef = useRef<AudioContext | null>(null);
   const ringtoneIntervalRef = useRef<number | null>(null);
   const callTimeoutRef = useRef<number | null>(null);
-  const disconnectTimeoutRef = useRef<number | null>(null);
+  const localPresentationVideoRef = useRef<HTMLVideoElement | null>(null);
+  const remotePresentationVideoRef = useRef<HTMLVideoElement | null>(null);
+  const presentationStageRef = useRef<HTMLDivElement | null>(null);
   const isCallingRef = useRef(false);
   const isInCallRef = useRef(false);
-  const isAcceptingIncomingCallRef = useRef(false);
+  const isScreenSharingRef = useRef(false);
   const isStoppingScreenShareRef = useRef(false);
-  const [incomingCallFromUserId, setIncomingCallFromUserId] = useState<number | null>(null);
-  const [connectedPeerUserId, setConnectedPeerUserId] = useState<number | null>(null);
+  const remoteParticipantIdsRef = useRef<number[]>([]);
+  const activeRemotePresenterUserIdRef = useRef<number | null>(null);
+  const forcedLogoutHandledRef = useRef(false);
+  const incomingCallRef = useRef<IncomingCallState | null>(null);
+  const screenShareLabelRef = useRef("");
+  const [incomingCall, setIncomingCall] = useState<IncomingCallState | null>(null);
+  const [remoteParticipantIds, setRemoteParticipantIds] = useState<number[]>([]);
+  const [pendingInviteIds, setPendingInviteIds] = useState<number[]>([]);
+  const [remoteAudioUserIds, setRemoteAudioUserIds] = useState<number[]>([]);
   const [isCalling, setIsCalling] = useState(false);
   const [isInCall, setIsInCall] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [isStartingScreenShare, setIsStartingScreenShare] = useState(false);
-  const [isAcceptingIncomingCall, setIsAcceptingIncomingCall] = useState(false);
+  const [activeRemotePresenterUserId, setActiveRemotePresenterUserId] = useState<number | null>(null);
   const [isRemoteScreenSharing, setIsRemoteScreenSharing] = useState(false);
-  const [hasRemotePresentationVideo, setHasRemotePresentationVideo] = useState(false);
   const [screenShareLabel, setScreenShareLabel] = useState("");
   const [remoteScreenShareLabel, setRemoteScreenShareLabel] = useState("");
   const [callStartedAt, setCallStartedAt] = useState<number | null>(null);
   const [callDurationSec, setCallDurationSec] = useState(0);
+  const [isAddPeopleOpen, setIsAddPeopleOpen] = useState(false);
+  const [isCallWindowMinimized, setIsCallWindowMinimized] = useState(false);
+  const [inviteSearch, setInviteSearch] = useState("");
   const [isPresentationFullscreen, setIsPresentationFullscreen] = useState(false);
+  const [selectedInviteeIds, setSelectedInviteeIds] = useState<number[]>([]);
+
+  const setRemoteParticipants = useCallback((updater: number[] | ((prev: number[]) => number[])) => {
+    setRemoteParticipantIds((prev) => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      const unique = Array.from(new Set(next.filter((id) => Number.isFinite(id) && id !== user?.id)));
+      remoteParticipantIdsRef.current = unique;
+      return unique;
+    });
+  }, [user?.id]);
+
+  const setPendingInvites = useCallback((updater: number[] | ((prev: number[]) => number[])) => {
+    setPendingInviteIds((prev) => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      const unique = Array.from(new Set(next.filter((id) => Number.isFinite(id) && id !== user?.id)));
+      pendingInviteIdsRef.current = unique;
+      return unique;
+    });
+  }, [user?.id]);
+
+  const removePendingInvite = useCallback((userId: number) => {
+    setPendingInvites((prev) => prev.filter((id) => id !== userId));
+    const timeoutId = pendingInviteTimeoutsRef.current.get(userId);
+    if (timeoutId) {
+      window.clearTimeout(timeoutId);
+      pendingInviteTimeoutsRef.current.delete(userId);
+    }
+  }, [setPendingInvites]);
 
   useEffect(() => {
     usersRef.current = (users || []).map((entry) => ({ id: entry.id, name: entry.name }));
@@ -115,8 +185,25 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   }, [isInCall]);
 
   useEffect(() => {
-    isAcceptingIncomingCallRef.current = isAcceptingIncomingCall;
-  }, [isAcceptingIncomingCall]);
+    isScreenSharingRef.current = isScreenSharing;
+  }, [isScreenSharing]);
+
+  useEffect(() => {
+    incomingCallRef.current = incomingCall;
+  }, [incomingCall]);
+
+  useEffect(() => {
+    screenShareLabelRef.current = screenShareLabel;
+  }, [screenShareLabel]);
+
+  useEffect(() => {
+    activeRemotePresenterUserIdRef.current = activeRemotePresenterUserId;
+  }, [activeRemotePresenterUserId]);
+
+  const getUserName = useCallback((userId: number | null) => {
+    if (!userId) return "Unknown user";
+    return usersRef.current.find((entry) => entry.id === userId)?.name || `User ${userId}`;
+  }, []);
 
   const invalidateRealtimeQueries = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: [api.tasks.list.path] });
@@ -149,13 +236,6 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     if (callTimeoutRef.current) {
       window.clearTimeout(callTimeoutRef.current);
       callTimeoutRef.current = null;
-    }
-  }, []);
-
-  const clearDisconnectTimeout = useCallback(() => {
-    if (disconnectTimeoutRef.current) {
-      window.clearTimeout(disconnectTimeoutRef.current);
-      disconnectTimeoutRef.current = null;
     }
   }, []);
 
@@ -204,7 +284,16 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const sendWebrtcSignal = useCallback((toUserId: number, signal: Record<string, unknown>) => {
+  const buildParticipantList = useCallback((extraIds: number[] = []) => {
+    return Array.from(
+      new Set<number>(
+        [user?.id, ...remoteParticipantIdsRef.current, ...pendingInviteIdsRef.current, ...extraIds]
+          .filter((id): id is number => typeof id === "number" && Number.isFinite(id))
+      )
+    );
+  }, [user?.id]);
+
+  const sendSignal = useCallback((toUserId: number, signal: Record<string, unknown>) => {
     const socket = wsRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) return;
     socket.send(
@@ -215,48 +304,150 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     );
   }, []);
 
-  const syncPresentationSender = useCallback((pc: RTCPeerConnection) => {
-    const presentationTransceiver = pc.getTransceivers().find((entry) => entry.receiver.track.kind === "video");
-    if (presentationTransceiver) {
-      presentationTransceiver.direction = "sendrecv";
-      presentationSenderRef.current = presentationTransceiver.sender;
+  const syncRemoteAudioUsers = useCallback(() => {
+    setRemoteAudioUserIds(Array.from(remoteAudioStreamsRef.current.keys()).sort((leftId, rightId) => leftId - rightId));
+  }, []);
+
+  const bindRemoteAudioElement = useCallback((userId: number, element: HTMLAudioElement | null) => {
+    if (!element) {
+      remoteAudioElementsRef.current.delete(userId);
       return;
     }
-    presentationSenderRef.current = null;
+    remoteAudioElementsRef.current.set(userId, element);
+    setElementStream(element, remoteAudioStreamsRef.current.get(userId) || null);
+    playMediaElement(element);
   }, []);
 
-  const hideRemoteScreenShare = useCallback((preserveReceiverTrack = true) => {
-    if (!preserveReceiverTrack && remotePresentationTrackRef.current) {
-      remotePresentationTrackRef.current.onended = null;
-      remotePresentationTrackRef.current.onmute = null;
-      remotePresentationTrackRef.current.onunmute = null;
-      remotePresentationTrackRef.current = null;
-      remotePresentationStreamRef.current = null;
+  const playRemoteAudioForUser = useCallback((userId: number) => {
+    playMediaElement(remoteAudioElementsRef.current.get(userId) || null);
+  }, []);
+
+  const ensureRemoteAudioStream = useCallback((userId: number) => {
+    const existingStream = remoteAudioStreamsRef.current.get(userId);
+    if (existingStream) return existingStream;
+
+    const nextStream = new MediaStream();
+    remoteAudioStreamsRef.current.set(userId, nextStream);
+    syncRemoteAudioUsers();
+    const audioElement = remoteAudioElementsRef.current.get(userId) || null;
+    setElementStream(audioElement, nextStream);
+    playMediaElement(audioElement);
+    return nextStream;
+  }, [syncRemoteAudioUsers]);
+
+  const removeRemotePresentationForUser = useCallback((userId: number) => {
+    remotePresentationStreamsRef.current.delete(userId);
+    remotePresenterLabelsRef.current.delete(userId);
+    setActiveRemotePresenterUserId((current) => {
+      if (current !== userId) return current;
+      const [nextPresenterId, nextLabel] = Array.from(remotePresenterLabelsRef.current.entries())[0] || [];
+      setIsRemoteScreenSharing(!!nextPresenterId);
+      setRemoteScreenShareLabel(nextLabel || "");
+      return nextPresenterId || null;
+    });
+  }, []);
+
+  const maybeAttachRemotePresentation = useCallback(() => {
+    if (!activeRemotePresenterUserId || !isRemoteScreenSharing) {
+      setElementStream(remotePresentationVideoRef.current, null);
+      return;
     }
+    const stream = remotePresentationStreamsRef.current.get(activeRemotePresenterUserId) || null;
+    setElementStream(remotePresentationVideoRef.current, stream);
+    playMediaElement(remotePresentationVideoRef.current);
+  }, [activeRemotePresenterUserId, isRemoteScreenSharing]);
+
+  useEffect(() => {
+    maybeAttachRemotePresentation();
+  }, [maybeAttachRemotePresentation]);
+
+  const cleanupPeerConnection = useCallback((peerUserId: number) => {
+    const peerEntry = peerEntriesRef.current.get(peerUserId);
+    if (peerEntry) {
+      peerEntry.pc.close();
+      peerEntriesRef.current.delete(peerUserId);
+    }
+
+    const remoteAudioStream = remoteAudioStreamsRef.current.get(peerUserId);
+    if (remoteAudioStream) {
+      remoteAudioStream.getTracks().forEach((track) => {
+        remoteAudioStream.removeTrack(track);
+      });
+      remoteAudioStreamsRef.current.delete(peerUserId);
+      setElementStream(remoteAudioElementsRef.current.get(peerUserId) || null, null);
+      syncRemoteAudioUsers();
+    }
+    queuedCandidatesByUserIdRef.current.delete(peerUserId);
+    removeRemotePresentationForUser(peerUserId);
+    removePendingInvite(peerUserId);
+    setRemoteParticipants((prev) => prev.filter((id) => id !== peerUserId));
+  }, [removePendingInvite, removeRemotePresentationForUser, setRemoteParticipants, syncRemoteAudioUsers]);
+
+  const resetFullSessionState = useCallback(() => {
+    peerEntriesRef.current.forEach((entry) => entry.pc.close());
+    peerEntriesRef.current.clear();
+    queuedCandidatesByUserIdRef.current.clear();
+    remotePresentationStreamsRef.current.clear();
+    remotePresenterLabelsRef.current.clear();
+    pendingInviteTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
+    pendingInviteTimeoutsRef.current.clear();
+
+    if (localAudioStreamRef.current) {
+      localAudioStreamRef.current.getTracks().forEach((track) => track.stop());
+      localAudioStreamRef.current = null;
+    }
+
+    remoteAudioStreamsRef.current.forEach((stream, userId) => {
+      stream.getTracks().forEach((track) => {
+        stream.removeTrack(track);
+      });
+      setElementStream(remoteAudioElementsRef.current.get(userId) || null, null);
+    });
+    remoteAudioStreamsRef.current.clear();
+    setRemoteAudioUserIds([]);
+
+    sessionIdRef.current = null;
+    setElementStream(localPresentationVideoRef.current, null);
     setElementStream(remotePresentationVideoRef.current, null);
-    setHasRemotePresentationVideo(false);
+    setRemoteParticipants([]);
+    pendingInviteIdsRef.current = [];
+    setPendingInviteIds([]);
+    setIncomingCall(null);
+    incomingCallRef.current = null;
+    setIsCalling(false);
+    setIsInCall(false);
+    setIsMuted(false);
+    setActiveRemotePresenterUserId(null);
     setIsRemoteScreenSharing(false);
     setRemoteScreenShareLabel("");
-  }, []);
+    setCallStartedAt(null);
+    setCallDurationSec(0);
+    setIsAddPeopleOpen(false);
+    setInviteSearch("");
+    setSelectedInviteeIds([]);
+    setIsCallWindowMinimized(false);
+    setIsPresentationFullscreen(false);
+    stopRinging();
+    clearCallTimeout();
+  }, [clearCallTimeout, setRemoteParticipants, stopRinging]);
 
-  const activateRemoteScreenShare = useCallback((stream: MediaStream, fallbackLabel?: string | null) => {
-    remotePresentationStreamRef.current = stream;
-    setElementStream(remotePresentationVideoRef.current, stream);
-    setHasRemotePresentationVideo(true);
-    setIsRemoteScreenSharing(true);
-    setRemoteScreenShareLabel((prev) => prev || getScreenShareLabel(fallbackLabel));
+  const applyScreenShareTrackToPeers = useCallback((track: MediaStreamTrack | null) => {
+    peerEntriesRef.current.forEach((entry) => {
+      if (entry.presentationSender) {
+        void entry.presentationSender.replaceTrack(track).catch(() => {
+          // Ignore per-peer screen share sender failures.
+        });
+      }
+    });
   }, []);
 
   const stopScreenShare = useCallback((notifyRemote: boolean) => {
     if (isStoppingScreenShareRef.current) return;
     isStoppingScreenShareRef.current = true;
 
-    const activePeerUserId = connectedPeerUserIdRef.current;
-    const currentStream = screenShareStreamRef.current;
-    const hadActiveShare = !!currentStream;
-
-    if (currentStream) {
-      currentStream.getTracks().forEach((track) => {
+    const hadActiveShare = !!screenShareStreamRef.current;
+    if (screenShareStreamRef.current) {
+      screenShareStreamRef.current.getTracks().forEach((track) => {
         track.onended = null;
         if (track.readyState !== "ended") {
           track.stop();
@@ -267,97 +458,82 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     screenShareStreamRef.current = null;
     setElementStream(localPresentationVideoRef.current, null);
     setIsScreenSharing(false);
+    isScreenSharingRef.current = false;
     setIsStartingScreenShare(false);
     setScreenShareLabel("");
+    screenShareLabelRef.current = "";
+    applyScreenShareTrackToPeers(null);
 
-    if (presentationSenderRef.current) {
-      void presentationSenderRef.current.replaceTrack(null).catch(() => {
-        // Ignore presentation sender cleanup failures.
+    if (notifyRemote && hadActiveShare) {
+      peerEntriesRef.current.forEach((_, peerUserId) => {
+        sendSignal(peerUserId, {
+          type: "screen-share-status",
+          sessionId: sessionIdRef.current,
+          status: "stopped",
+        });
       });
     }
 
-    if (notifyRemote && hadActiveShare && activePeerUserId) {
-      sendWebrtcSignal(activePeerUserId, { type: "screen-share-status", status: "stopped" });
-    }
-
     isStoppingScreenShareRef.current = false;
-  }, [sendWebrtcSignal]);
+  }, [applyScreenShareTrackToPeers, sendSignal]);
 
-  const stopCurrentSession = useCallback((notifyRemote: boolean, clearPendingOfferStorage = true) => {
-    const peerUserId = connectedPeerUserIdRef.current;
-
-    if (notifyRemote && peerUserId) {
-      sendWebrtcSignal(peerUserId, { type: "hangup" });
+  const stopCurrentSession = useCallback((notifyRemote: boolean) => {
+    if (notifyRemote) {
+      peerEntriesRef.current.forEach((_, peerUserId) => {
+        sendSignal(peerUserId, {
+          type: "hangup",
+          sessionId: sessionIdRef.current,
+        });
+      });
     }
 
     stopScreenShare(false);
-    hideRemoteScreenShare(false);
-    clearDisconnectTimeout();
+    resetFullSessionState();
+  }, [resetFullSessionState, sendSignal, stopScreenShare]);
 
-    const currentPeer = peerRef.current;
-    peerRef.current = null;
-    if (currentPeer) {
-      currentPeer.close();
+  const ensureLocalAudioStream = useCallback(async () => {
+    if (!localAudioStreamRef.current) {
+      localAudioStreamRef.current = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: false,
+      });
     }
-
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach((track) => track.stop());
-      localStreamRef.current = null;
-    }
-
-    remoteStreamRef.current = null;
-    presentationSenderRef.current = null;
-    setElementStream(remoteAudioRef.current, null);
-
-    queuedCandidatesRef.current = [];
-    pendingOfferRef.current = null;
-    pendingOfferFromRef.current = null;
-    connectedPeerUserIdRef.current = null;
-    setIncomingCallFromUserId(null);
-    setConnectedPeerUserId(null);
-    setIsCalling(false);
-    setIsInCall(false);
-    setIsMuted(false);
-    setIsScreenSharing(false);
-    setIsStartingScreenShare(false);
-    setIsAcceptingIncomingCall(false);
-    setScreenShareLabel("");
-    setCallStartedAt(null);
-    setCallDurationSec(0);
-    stopRinging();
-    clearCallTimeout();
-
-    if (clearPendingOfferStorage) {
-      try {
-        sessionStorage.removeItem(PENDING_CALL_STORAGE_KEY);
-      } catch {
-        // Ignore storage cleanup issues.
-      }
-    }
-  }, [clearCallTimeout, clearDisconnectTimeout, hideRemoteScreenShare, sendWebrtcSignal, stopRinging, stopScreenShare]);
+    localAudioStreamRef.current.getAudioTracks().forEach((track) => {
+      track.enabled = !isMuted;
+    });
+    return localAudioStreamRef.current;
+  }, [isMuted]);
 
   const createPeerConnection = useCallback((targetUserId: number, includePresentationChannel = false) => {
-    const existingPeer = peerRef.current;
-    peerRef.current = null;
-    if (existingPeer) {
-      existingPeer.close();
-    }
+    cleanupPeerConnection(targetUserId);
 
     const pc = new RTCPeerConnection({
       iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
     });
 
+    const peerEntry: PeerEntry = {
+      pc,
+      presentationSender: null,
+    };
+
     if (includePresentationChannel) {
       const presentationTransceiver = pc.addTransceiver("video", { direction: "sendrecv" });
-      presentationSenderRef.current = presentationTransceiver.sender;
-    } else {
-      presentationSenderRef.current = null;
+      peerEntry.presentationSender = presentationTransceiver.sender;
+      const activeTrack = screenShareStreamRef.current?.getVideoTracks()[0] || null;
+      if (activeTrack) {
+        void presentationTransceiver.sender.replaceTrack(activeTrack).catch(() => {
+          // Ignore initial screen-share sender sync failures.
+        });
+      }
     }
+
+    peerEntriesRef.current.set(targetUserId, peerEntry);
 
     pc.onicecandidate = (event) => {
       if (event.candidate) {
-        sendWebrtcSignal(targetUserId, {
+        sendSignal(targetUserId, {
           type: "ice-candidate",
+          sessionId: sessionIdRef.current,
           candidate: event.candidate.toJSON(),
         });
       }
@@ -365,76 +541,164 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
 
     pc.ontrack = (event) => {
       if (event.track.kind === "video") {
-        const nextPresentationStream = new MediaStream([event.track]);
-        remotePresentationStreamRef.current = nextPresentationStream;
-        remotePresentationTrackRef.current = event.track;
-        setHasRemotePresentationVideo(false);
+        const remotePresentationStream = event.streams[0] || new MediaStream([event.track]);
+        remotePresentationStreamsRef.current.set(targetUserId, remotePresentationStream);
 
-        const handlePresentationReady = () => {
-          if (remotePresentationTrackRef.current !== event.track) return;
-          activateRemoteScreenShare(nextPresentationStream, event.track.label || "Live screen share");
+        const attachRemotePresentation = () => {
+          if (activeRemotePresenterUserIdRef.current === targetUserId || remotePresenterLabelsRef.current.has(targetUserId)) {
+            setActiveRemotePresenterUserId(targetUserId);
+            setIsRemoteScreenSharing(true);
+            setRemoteScreenShareLabel(remotePresenterLabelsRef.current.get(targetUserId) || "Shared screen");
+            setElementStream(remotePresentationVideoRef.current, remotePresentationStream);
+            playMediaElement(remotePresentationVideoRef.current);
+          }
         };
 
-        if (!event.track.muted && event.track.readyState === "live") {
-          handlePresentationReady();
-        }
-
+        attachRemotePresentation();
         event.track.onunmute = () => {
-          handlePresentationReady();
+          attachRemotePresentation();
         };
         event.track.onmute = () => {
-          if (remotePresentationTrackRef.current !== event.track) return;
-          setElementStream(remotePresentationVideoRef.current, null);
-          setHasRemotePresentationVideo(false);
+          if (activeRemotePresenterUserIdRef.current === targetUserId) {
+            setElementStream(remotePresentationVideoRef.current, null);
+          }
         };
         event.track.onended = () => {
-          if (remotePresentationTrackRef.current !== event.track) return;
-          hideRemoteScreenShare(false);
+          removeRemotePresentationForUser(targetUserId);
         };
         return;
       }
 
-      if (!remoteStreamRef.current) {
-        remoteStreamRef.current = new MediaStream();
+      const remoteAudioStream = ensureRemoteAudioStream(targetUserId);
+      if (!remoteAudioStream.getTracks().some((track) => track.id === event.track.id)) {
+        remoteAudioStream.addTrack(event.track);
       }
-      remoteStreamRef.current.addTrack(event.track);
-      setElementStream(remoteAudioRef.current, remoteStreamRef.current);
+      event.track.onunmute = () => {
+        playRemoteAudioForUser(targetUserId);
+      };
+      playRemoteAudioForUser(targetUserId);
+      setIsCalling(false);
       setIsInCall(true);
       setCallStartedAt((prev) => prev ?? Date.now());
+      setRemoteParticipants((prev) => (prev.includes(targetUserId) ? prev : [...prev, targetUserId]));
     };
 
     pc.onconnectionstatechange = () => {
-      if (peerRef.current !== pc) return;
+      const currentEntry = peerEntriesRef.current.get(targetUserId);
+      if (!currentEntry || currentEntry.pc !== pc) return;
+
       if (pc.connectionState === "connected") {
-        clearDisconnectTimeout();
-        return;
+        setIsCalling(false);
+        setIsInCall(true);
+        setCallStartedAt((prev) => prev ?? Date.now());
+        setRemoteParticipants((prev) => (prev.includes(targetUserId) ? prev : [...prev, targetUserId]));
       }
 
-      if (pc.connectionState === "disconnected") {
-        clearDisconnectTimeout();
-        disconnectTimeoutRef.current = window.setTimeout(() => {
-          if (peerRef.current !== pc || pc.connectionState !== "disconnected") return;
-          stopCurrentSession(false);
-          toast({
-            title: "Call lost",
-            description: "The connection dropped before the call could recover.",
-            variant: "destructive",
-          });
-        }, 12_000);
-        return;
-      }
-
-      if (pc.connectionState === "failed" || pc.connectionState === "closed") {
-        clearDisconnectTimeout();
-        stopCurrentSession(false);
+      if (pc.connectionState === "failed" || pc.connectionState === "disconnected" || pc.connectionState === "closed") {
+        cleanupPeerConnection(targetUserId);
+        if (peerEntriesRef.current.size === 0 && pendingInviteIdsRef.current.length === 0) {
+          resetFullSessionState();
+        } else if (peerEntriesRef.current.size === 0) {
+          setIsInCall(false);
+        }
       }
     };
 
-    peerRef.current = pc;
-    connectedPeerUserIdRef.current = targetUserId;
-    setConnectedPeerUserId(targetUserId);
     return pc;
-  }, [activateRemoteScreenShare, clearDisconnectTimeout, hideRemoteScreenShare, sendWebrtcSignal, stopCurrentSession, toast]);
+  }, [cleanupPeerConnection, ensureRemoteAudioStream, playRemoteAudioForUser, removeRemotePresentationForUser, resetFullSessionState, sendSignal, setRemoteParticipants]);
+
+  const syncPresentationSender = useCallback((targetUserId: number) => {
+    const entry = peerEntriesRef.current.get(targetUserId);
+    if (!entry) return;
+    const presentationTransceiver = entry.pc.getTransceivers().find((transceiver) => transceiver.receiver.track.kind === "video");
+    if (!presentationTransceiver) return;
+    presentationTransceiver.direction = "sendrecv";
+    entry.presentationSender = presentationTransceiver.sender;
+    const activeTrack = screenShareStreamRef.current?.getVideoTracks()[0] || null;
+    if (activeTrack) {
+      void presentationTransceiver.sender.replaceTrack(activeTrack).catch(() => {
+        // Ignore screen-share sender sync failures.
+      });
+    }
+  }, []);
+
+  const applyQueuedCandidates = useCallback(async (targetUserId: number, pc: RTCPeerConnection) => {
+    const queuedCandidates = queuedCandidatesByUserIdRef.current.get(targetUserId) || [];
+    queuedCandidatesByUserIdRef.current.delete(targetUserId);
+    for (const candidate of queuedCandidates) {
+      await pc.addIceCandidate(new RTCIceCandidate(candidate));
+    }
+  }, []);
+
+  const sendOfferToUser = useCallback(async (targetUserId: number, participantIds: number[]) => {
+    const localAudioStream = await ensureLocalAudioStream();
+    const pc = createPeerConnection(targetUserId, true);
+    localAudioStream.getTracks().forEach((track) => pc.addTrack(track, localAudioStream));
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    sendSignal(targetUserId, {
+      type: "offer",
+      sdp: offer,
+      sessionId: sessionIdRef.current,
+      participantIds,
+    });
+  }, [createPeerConnection, ensureLocalAudioStream, sendSignal]);
+
+  const answerOffer = useCallback(async (offerState: IncomingCallState, autoJoin = false) => {
+    sessionIdRef.current = offerState.sessionId;
+    incomingCallRef.current = null;
+    setIncomingCall(null);
+    setRemoteParticipants(offerState.participantIds.filter((id) => id !== user?.id));
+    stopRinging();
+
+    const localAudioStream = await ensureLocalAudioStream();
+    const pc = createPeerConnection(offerState.fromUserId);
+    localAudioStream.getTracks().forEach((track) => pc.addTrack(track, localAudioStream));
+
+    await pc.setRemoteDescription(new RTCSessionDescription(offerState.sdp));
+    syncPresentationSender(offerState.fromUserId);
+    await applyQueuedCandidates(offerState.fromUserId, pc);
+
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    sendSignal(offerState.fromUserId, {
+      type: "answer",
+      sdp: answer,
+      sessionId: offerState.sessionId,
+      participantIds: offerState.participantIds,
+      autoJoin,
+    });
+
+    setIsCalling(false);
+    setIsInCall(true);
+    setCallStartedAt((prev) => prev ?? Date.now());
+  }, [applyQueuedCandidates, createPeerConnection, ensureLocalAudioStream, sendSignal, setRemoteParticipants, stopRinging, syncPresentationSender, user?.id]);
+
+  const acceptIncomingCall = useCallback(async () => {
+    if (!incomingCall) return;
+    try {
+      await answerOffer(incomingCall);
+    } catch {
+      toast({
+        title: "Unable to join call",
+        description: "Microphone access failed or call setup error.",
+        variant: "destructive",
+      });
+      stopCurrentSession(false);
+    }
+  }, [answerOffer, incomingCall, stopCurrentSession, toast]);
+
+  const declineIncomingCall = useCallback(() => {
+    if (!incomingCall) return;
+    sendSignal(incomingCall.fromUserId, {
+      type: "decline",
+      sessionId: incomingCall.sessionId,
+    });
+    incomingCallRef.current = null;
+    setIncomingCall(null);
+    stopRinging();
+  }, [incomingCall, sendSignal, stopRinging]);
 
   const startCall = useCallback(async (userId: number) => {
     if (!userId) {
@@ -446,7 +710,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    if (incomingCallFromUserId || isCallingRef.current || isInCallRef.current || isAcceptingIncomingCallRef.current) {
+    if (incomingCall || isCallingRef.current || isInCallRef.current) {
       toast({
         title: "Call already active",
         description: "Finish the current call before starting a new one.",
@@ -454,26 +718,22 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
+    sessionIdRef.current = buildSessionId();
+    setRemoteParticipants([]);
+    setPendingInvites([userId]);
+    setIsCalling(true);
+    setIsInCall(false);
+    setIsAddPeopleOpen(false);
+    setSelectedInviteeIds([]);
+    setIsCallWindowMinimized(false);
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-        video: false,
-      });
-      localStreamRef.current = stream;
-      setIsCalling(true);
-      setConnectedPeerUserId(userId);
-      connectedPeerUserIdRef.current = userId;
-
-      const pc = createPeerConnection(userId, true);
-      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
-
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      sendWebrtcSignal(userId, { type: "offer", sdp: offer });
+      await sendOfferToUser(userId, buildParticipantList([userId]));
       startRinging("outgoing");
       clearCallTimeout();
       callTimeoutRef.current = window.setTimeout(() => {
-        if (isCallingRef.current && !isInCallRef.current) {
+        if (isCallingRef.current && !isInCallRef.current && pendingInviteIdsRef.current.includes(userId)) {
+          removePendingInvite(userId);
           stopCurrentSession(true);
           toast({
             title: "No answer",
@@ -490,91 +750,46 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       });
       stopCurrentSession(false);
     }
-  }, [clearCallTimeout, createPeerConnection, incomingCallFromUserId, sendWebrtcSignal, startRinging, stopCurrentSession, toast]);
+  }, [buildParticipantList, clearCallTimeout, incomingCall, removePendingInvite, sendOfferToUser, setPendingInvites, setRemoteParticipants, startRinging, stopCurrentSession, toast]);
 
-  const acceptIncomingCall = useCallback(async () => {
-    const fromUserId = pendingOfferFromRef.current;
-    const offer = pendingOfferRef.current;
-    if (!fromUserId || !offer || isAcceptingIncomingCallRef.current) return;
+  const inviteParticipants = useCallback(async (userIds: number[]) => {
+    if (!sessionIdRef.current) return;
+    const nextInvitees = userIds.filter((candidateId) => {
+      return candidateId !== user?.id
+        && !remoteParticipantIdsRef.current.includes(candidateId)
+        && !pendingInviteIdsRef.current.includes(candidateId);
+    });
+    if (nextInvitees.length === 0) return;
 
-    setIsAcceptingIncomingCall(true);
-    stopRinging();
-    pendingOfferFromRef.current = null;
-    pendingOfferRef.current = null;
-    try {
-      sessionStorage.removeItem(PENDING_CALL_STORAGE_KEY);
-    } catch {
-      // Ignore storage cleanup issues.
-    }
+    const allParticipantIds = buildParticipantList(nextInvitees);
+    setPendingInvites((prev) => [...prev, ...nextInvitees]);
 
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-        video: false,
-      });
-      localStreamRef.current = stream;
-      stream.getAudioTracks().forEach((track) => {
-        track.enabled = !isMuted;
-      });
-
-      const pc = createPeerConnection(fromUserId);
-      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
-      await pc.setRemoteDescription(new RTCSessionDescription(offer));
-      syncPresentationSender(pc);
-
-      for (const candidate of queuedCandidatesRef.current) {
-        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+    for (const inviteeId of nextInvitees) {
+      try {
+        await sendOfferToUser(inviteeId, allParticipantIds);
+      } catch {
+        removePendingInvite(inviteeId);
+        toast({
+          title: "Invite failed",
+          description: `Could not add ${getUserName(inviteeId)} to the call.`,
+          variant: "destructive",
+        });
       }
-      queuedCandidatesRef.current = [];
-
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      sendWebrtcSignal(fromUserId, { type: "answer", sdp: answer });
-      setIncomingCallFromUserId(null);
-      setIsCalling(false);
-      setIsInCall(true);
-      setCallStartedAt(Date.now());
-    } catch {
-      toast({
-        title: "Unable to join call",
-        description: "Microphone access failed or call setup error.",
-        variant: "destructive",
-      });
-      stopCurrentSession(false);
-    } finally {
-      setIsAcceptingIncomingCall(false);
     }
-  }, [createPeerConnection, isMuted, sendWebrtcSignal, stopCurrentSession, stopRinging, syncPresentationSender, toast]);
-
-  const declineIncomingCall = useCallback(() => {
-    const fromUserId = pendingOfferFromRef.current;
-    if (fromUserId) {
-      sendWebrtcSignal(fromUserId, { type: "decline" });
-    }
-    pendingOfferFromRef.current = null;
-    pendingOfferRef.current = null;
-    setIsAcceptingIncomingCall(false);
-    setIncomingCallFromUserId(null);
-    stopRinging();
-    try {
-      sessionStorage.removeItem(PENDING_CALL_STORAGE_KEY);
-    } catch {
-      // Ignore storage cleanup issues.
-    }
-  }, [sendWebrtcSignal, stopRinging]);
+  }, [buildParticipantList, getUserName, removePendingInvite, sendOfferToUser, setPendingInvites, toast, user?.id]);
 
   const toggleMute = useCallback(() => {
     const next = !isMuted;
     setIsMuted(next);
-    if (localStreamRef.current) {
-      localStreamRef.current.getAudioTracks().forEach((track) => {
+    if (localAudioStreamRef.current) {
+      localAudioStreamRef.current.getAudioTracks().forEach((track) => {
         track.enabled = !next;
       });
     }
   }, [isMuted]);
 
   const startScreenShare = useCallback(async () => {
-    if (!isInCall || !peerRef.current || !connectedPeerUserIdRef.current) {
+    if (!isInCallRef.current || peerEntriesRef.current.size === 0) {
       toast({
         title: "Join call first",
         description: "Start or accept a call before sharing your screen.",
@@ -584,26 +799,14 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     }
 
     if (isRemoteScreenSharing) {
-      const remoteName = usersRef.current.find((member) => member.id === connectedPeerUserIdRef.current)?.name || "The other user";
       toast({
         title: "Presentation already live",
-        description: `${remoteName} is already presenting.`,
+        description: `${getUserName(activeRemotePresenterUserId)} is already presenting.`,
       });
       return;
     }
 
     if (isStartingScreenShare) return;
-
-    const sender = presentationSenderRef.current;
-    if (!sender) {
-      toast({
-        title: "Screen share unavailable",
-        description: "Presentation channel is not ready yet. Please retry in a moment.",
-        variant: "destructive",
-      });
-      return;
-    }
-
     setIsStartingScreenShare(true);
 
     try {
@@ -626,17 +829,19 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
 
       screenShareStreamRef.current = screenStream;
       setScreenShareLabel(getScreenShareLabel(videoTrack.label));
+      screenShareLabelRef.current = getScreenShareLabel(videoTrack.label);
       setIsScreenSharing(true);
+      isScreenSharingRef.current = true;
       setElementStream(localPresentationVideoRef.current, screenStream);
-      await sender.replaceTrack(videoTrack);
-      sendWebrtcSignal(connectedPeerUserIdRef.current, {
-        type: "screen-share-status",
-        status: "started",
-        label: getScreenShareLabel(videoTrack.label),
-      });
-      toast({
-        title: "Screen sharing started",
-        description: "Your screen is now visible to the other participant.",
+      applyScreenShareTrackToPeers(videoTrack);
+
+      peerEntriesRef.current.forEach((_, peerUserId) => {
+        sendSignal(peerUserId, {
+          type: "screen-share-status",
+          sessionId: sessionIdRef.current,
+          status: "started",
+          label: getScreenShareLabel(videoTrack.label),
+        });
       });
     } catch (error) {
       if (screenShareStreamRef.current) {
@@ -644,7 +849,9 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
         screenShareStreamRef.current = null;
       }
       setIsScreenSharing(false);
+      isScreenSharingRef.current = false;
       setScreenShareLabel("");
+      screenShareLabelRef.current = "";
       const isPermissionDismissed = error instanceof DOMException && (error.name === "NotAllowedError" || error.name === "AbortError");
       toast({
         title: "Screen share cancelled",
@@ -656,7 +863,92 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setIsStartingScreenShare(false);
     }
-  }, [isInCall, isRemoteScreenSharing, isStartingScreenShare, sendWebrtcSignal, stopScreenShare, toast]);
+  }, [activeRemotePresenterUserId, applyScreenShareTrackToPeers, getUserName, isRemoteScreenSharing, isStartingScreenShare, sendSignal, stopScreenShare, toast]);
+
+  const togglePresentationFullscreen = useCallback(async () => {
+    const stageElement = presentationStageRef.current;
+    if (!stageElement || typeof document === "undefined") return;
+
+    try {
+      if (document.fullscreenElement === stageElement) {
+        await document.exitFullscreen();
+        return;
+      }
+
+      if (!document.fullscreenElement) {
+        await stageElement.requestFullscreen();
+      }
+    } catch {
+      toast({
+        title: "Fullscreen unavailable",
+        description: "This browser blocked fullscreen for the shared screen preview.",
+        variant: "destructive",
+      });
+    }
+  }, [toast]);
+
+  const runtimeRef = useRef({
+    applyQueuedCandidates,
+    answerOffer,
+    buildParticipantList,
+    clearCallTimeout,
+    cleanupPeerConnection,
+    getUserName,
+    invalidateRealtimeQueries,
+    removePendingInvite,
+    resetFullSessionState,
+    sendOfferToUser,
+    sendSignal,
+    setRemoteParticipants,
+    showBrowserNotification,
+    startRinging,
+    stopCurrentSession,
+    stopRinging,
+    syncPresentationSender,
+    toast,
+  });
+
+  useEffect(() => {
+    runtimeRef.current = {
+      applyQueuedCandidates,
+      answerOffer,
+      buildParticipantList,
+      clearCallTimeout,
+      cleanupPeerConnection,
+      getUserName,
+      invalidateRealtimeQueries,
+      removePendingInvite,
+      resetFullSessionState,
+      sendOfferToUser,
+      sendSignal,
+      setRemoteParticipants,
+      showBrowserNotification,
+      startRinging,
+      stopCurrentSession,
+      stopRinging,
+      syncPresentationSender,
+      toast,
+    };
+  }, [
+    applyQueuedCandidates,
+    answerOffer,
+    buildParticipantList,
+    clearCallTimeout,
+    cleanupPeerConnection,
+    getUserName,
+    invalidateRealtimeQueries,
+    removePendingInvite,
+    resetFullSessionState,
+    sendOfferToUser,
+    sendSignal,
+    setRemoteParticipants,
+    showBrowserNotification,
+    startRinging,
+    stopCurrentSession,
+    stopRinging,
+    syncPresentationSender,
+    toast,
+  ]);
 
   const toggleScreenShare = useCallback(async () => {
     if (isScreenSharing) {
@@ -667,7 +959,9 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   }, [isScreenSharing, startScreenShare, stopScreenShare]);
 
   useEffect(() => {
-    if (!user?.id) return;
+    const currentUserId = user?.id;
+    if (!currentUserId) return;
+    forcedLogoutHandledRef.current = false;
 
     if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
       const alreadyPrompted = localStorage.getItem(BROWSER_NOTIFICATIONS_PROMPT_KEY) === "1";
@@ -678,11 +972,12 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     }
 
     const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-    const ws = new WebSocket(`${protocol}://${window.location.host}/ws?userId=${user.id}`);
+    const ws = new WebSocket(`${protocol}://${window.location.host}/ws?userId=${currentUserId}`);
     wsRef.current = ws;
 
     ws.onmessage = async (event) => {
       try {
+        const runtime = runtimeRef.current;
         const parsed = JSON.parse(String(event.data || "{}"));
         const type = parsed?.type;
         const payload = parsed?.payload || {};
@@ -690,6 +985,18 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
         if (type === "task:changed") {
           queryClient.invalidateQueries({ queryKey: [api.tasks.list.path] });
           queryClient.invalidateQueries({ queryKey: [api.tasks.get.path] });
+        }
+
+        if (type === "auth:session-revoked") {
+          forcedLogoutHandledRef.current = true;
+          stopCurrentSession(false);
+          toast({
+            title: "Session ended",
+            description: "This account was signed in on another browser. Please log in again.",
+            variant: "destructive",
+          });
+          window.location.href = withBasePath("login");
+          return;
         }
 
         if (type === "notify" && payload?.title) {
@@ -701,9 +1008,30 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
         }
 
         if (type === "webrtc:signal") {
+          const {
+            applyQueuedCandidates,
+            answerOffer,
+            buildParticipantList,
+            clearCallTimeout,
+            cleanupPeerConnection,
+            getUserName,
+            invalidateRealtimeQueries,
+            removePendingInvite,
+            resetFullSessionState,
+            sendOfferToUser,
+            sendSignal,
+            setRemoteParticipants,
+            showBrowserNotification,
+            startRinging,
+            stopCurrentSession,
+            stopRinging,
+            syncPresentationSender,
+            toast,
+          } = runtime;
           const fromUserId = Number(payload?.fromUserId);
           const signal = payload?.signal || {};
           const signalType = signal?.type;
+          const signalSessionId = typeof signal?.sessionId === "string" ? signal.sessionId : null;
 
           if (!Number.isFinite(fromUserId)) {
             invalidateRealtimeQueries();
@@ -711,64 +1039,101 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
           }
 
           if (signalType === "offer") {
-            if (isAcceptingIncomingCallRef.current) {
+            const incomingState: IncomingCallState = {
+              fromUserId,
+              sdp: signal?.sdp as RTCSessionDescriptionInit,
+              sessionId: signalSessionId || buildSessionId(),
+              participantIds: Array.isArray(signal?.participantIds)
+                ? signal.participantIds.map((entry: unknown) => Number(entry)).filter((entry: number) => Number.isFinite(entry))
+                : [fromUserId, currentUserId],
+            };
+
+            const isSameSessionExpansion = !!sessionIdRef.current && incomingState.sessionId === sessionIdRef.current && isInCallRef.current;
+            if (isSameSessionExpansion) {
+              await answerOffer(incomingState, true);
               invalidateRealtimeQueries();
               return;
             }
 
-            if (isCallingRef.current || isInCallRef.current) {
-              sendWebrtcSignal(fromUserId, { type: "decline" });
+            if (incomingCallRef.current || isCallingRef.current || isInCallRef.current) {
+              sendSignal(fromUserId, { type: "decline", sessionId: incomingState.sessionId });
               invalidateRealtimeQueries();
               return;
             }
 
-            try {
-              sessionStorage.setItem(
-                PENDING_CALL_STORAGE_KEY,
-                JSON.stringify({
-                  fromUserId,
-                  sdp: signal?.sdp,
-                  createdAt: Date.now(),
-                }),
-              );
-            } catch {
-              // Ignore storage sync issues.
-            }
-
-            pendingOfferFromRef.current = fromUserId;
-            pendingOfferRef.current = signal?.sdp;
-            setIncomingCallFromUserId(fromUserId);
+            incomingCallRef.current = incomingState;
+            setIncomingCall(incomingState);
+            setIsCallWindowMinimized(false);
             startRinging("incoming");
-
-            const callerName = usersRef.current.find((member) => member.id === fromUserId)?.name || `User ${fromUserId}`;
             showBrowserNotification("Incoming Call", {
-              body: `${callerName} is calling you`,
+              body: `${getUserName(fromUserId)} is calling you`,
               tag: `incoming-call-${fromUserId}`,
             });
-
             invalidateRealtimeQueries();
             return;
           }
 
           if (signalType === "answer") {
-            if (peerRef.current && signal?.sdp) {
-              await peerRef.current.setRemoteDescription(new RTCSessionDescription(signal.sdp));
-              syncPresentationSender(peerRef.current);
+            const peerEntry = peerEntriesRef.current.get(fromUserId);
+            if (peerEntry && signal?.sdp) {
+              await peerEntry.pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+              await applyQueuedCandidates(fromUserId, peerEntry.pc);
+              syncPresentationSender(fromUserId);
             }
+            removePendingInvite(fromUserId);
             setIsCalling(false);
             setIsInCall(true);
-            setCallStartedAt(Date.now());
+            setCallStartedAt((prev) => prev ?? Date.now());
             stopRinging();
             clearCallTimeout();
+            setRemoteParticipants((prev) => (prev.includes(fromUserId) ? prev : [...prev, fromUserId]));
+
+            const allParticipantIds = buildParticipantList([fromUserId]);
+            const existingParticipants = allParticipantIds.filter((participantId) => participantId !== currentUserId && participantId !== fromUserId);
+            existingParticipants.forEach((participantId) => {
+              sendSignal(participantId, {
+                type: "participant-joined",
+                sessionId: signalSessionId || sessionIdRef.current,
+                userId: fromUserId,
+                participantIds: allParticipantIds,
+              });
+            });
+
+            if (isScreenSharingRef.current && screenShareStreamRef.current) {
+              sendSignal(fromUserId, {
+                type: "screen-share-status",
+                sessionId: signalSessionId || sessionIdRef.current,
+                status: "started",
+                label: screenShareLabelRef.current || "Shared screen",
+              });
+            }
+
+            invalidateRealtimeQueries();
+            return;
+          }
+
+          if (signalType === "participant-joined" && signalSessionId && signalSessionId === sessionIdRef.current) {
+            const joinedUserId = Number(signal?.userId);
+            const participantIds = Array.isArray(signal?.participantIds)
+              ? signal.participantIds.map((entry: unknown) => Number(entry)).filter((entry: number) => Number.isFinite(entry))
+              : buildParticipantList([joinedUserId]);
+
+            if (Number.isFinite(joinedUserId) && joinedUserId !== currentUserId && !peerEntriesRef.current.has(joinedUserId)) {
+              setRemoteParticipants(participantIds.filter((participantId: number) => participantId !== currentUserId));
+              await sendOfferToUser(joinedUserId, participantIds);
+            }
             invalidateRealtimeQueries();
             return;
           }
 
           if (signalType === "ice-candidate" && signal?.candidate) {
-            if (peerRef.current && peerRef.current.remoteDescription) {
-              await peerRef.current.addIceCandidate(new RTCIceCandidate(signal.candidate));
+            const peerEntry = peerEntriesRef.current.get(fromUserId);
+            if (peerEntry && peerEntry.pc.remoteDescription) {
+              await peerEntry.pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
             } else {
-              queuedCandidatesRef.current.push(signal.candidate);
+              const queued = queuedCandidatesByUserIdRef.current.get(fromUserId) || [];
+              queued.push(signal.candidate);
+              queuedCandidatesByUserIdRef.current.set(fromUserId, queued);
             }
             invalidateRealtimeQueries();
             return;
@@ -776,50 +1141,43 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
 
           if (signalType === "screen-share-status") {
             const status = signal?.status === "started" ? "started" : signal?.status === "stopped" ? "stopped" : null;
-            if (status) {
-              const presenterName = usersRef.current.find((member) => member.id === fromUserId)?.name || "User";
+            if (status && signalSessionId === sessionIdRef.current) {
               if (status === "started") {
-                const incomingLabel = getScreenShareLabel(typeof signal?.label === "string" ? signal.label : "");
+                const label = getScreenShareLabel(typeof signal?.label === "string" ? signal.label : "");
+                remotePresenterLabelsRef.current.set(fromUserId, label);
+                setActiveRemotePresenterUserId(fromUserId);
                 setIsRemoteScreenSharing(true);
-                setRemoteScreenShareLabel(incomingLabel);
-                if (
-                  remotePresentationTrackRef.current &&
-                  remotePresentationStreamRef.current &&
-                  !remotePresentationTrackRef.current.muted &&
-                  remotePresentationTrackRef.current.readyState === "live"
-                ) {
-                  activateRemoteScreenShare(remotePresentationStreamRef.current, incomingLabel);
-                }
-                toast({
-                  title: "Screen sharing started",
-                  description: `${presenterName} is presenting now.`,
-                });
+                setRemoteScreenShareLabel(label);
               } else {
-                hideRemoteScreenShare();
-                toast({
-                  title: "Screen sharing stopped",
-                  description: `${presenterName} stopped presenting.`,
-                });
+                removeRemotePresentationForUser(fromUserId);
               }
             }
             invalidateRealtimeQueries();
             return;
           }
 
-          if (signalType === "hangup" || signalType === "decline") {
-            const endedByName = usersRef.current.find((member) => member.id === fromUserId)?.name || "User";
-            try {
-              sessionStorage.removeItem(PENDING_CALL_STORAGE_KEY);
-            } catch {
-              // Ignore storage cleanup issues.
-            }
-            stopCurrentSession(false);
+          if (signalType === "hangup") {
+            cleanupPeerConnection(fromUserId);
             toast({
-              title: "Call ended",
-              description: signalType === "decline"
-                ? `${endedByName} declined the call.`
-                : `${endedByName} ended the call.`,
+              title: "Participant left",
+              description: `${getUserName(fromUserId)} left the call.`,
             });
+            if (peerEntriesRef.current.size === 0 && pendingInviteIdsRef.current.length === 0) {
+              resetFullSessionState();
+            }
+            invalidateRealtimeQueries();
+            return;
+          }
+
+          if (signalType === "decline") {
+            removePendingInvite(fromUserId);
+            toast({
+              title: "Call declined",
+              description: `${getUserName(fromUserId)} declined the call.`,
+            });
+            if (peerEntriesRef.current.size === 0 && pendingInviteIdsRef.current.length === 0) {
+              stopCurrentSession(false);
+            }
           }
         }
       } catch {
@@ -829,37 +1187,27 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       }
     };
 
+    ws.onclose = (event) => {
+      if (event.code === 4001 && !forcedLogoutHandledRef.current) {
+        forcedLogoutHandledRef.current = true;
+        stopCurrentSession(false);
+        toast({
+          title: "Session ended",
+          description: "This account is no longer active in this browser. Please log in again.",
+          variant: "destructive",
+        });
+        window.location.href = withBasePath("login");
+      }
+    };
+
     return () => {
       ws.close();
       wsRef.current = null;
     };
-  }, [activateRemoteScreenShare, clearCallTimeout, hideRemoteScreenShare, invalidateRealtimeQueries, queryClient, sendWebrtcSignal, showBrowserNotification, startRinging, stopCurrentSession, stopRinging, syncPresentationSender, toast, user?.id]);
+  }, [queryClient, user?.id]);
 
   useEffect(() => {
-    try {
-      const raw = sessionStorage.getItem(PENDING_CALL_STORAGE_KEY);
-      if (!raw || incomingCallFromUserId || isCalling || isInCall || isAcceptingIncomingCall) return;
-      const parsed = JSON.parse(raw) as { fromUserId?: unknown; sdp?: unknown; createdAt?: unknown };
-      const fromUserId = Number(parsed?.fromUserId);
-      const createdAt = Number(parsed?.createdAt);
-      const sdp = parsed?.sdp;
-      const isFresh = Number.isFinite(createdAt) ? Date.now() - createdAt < 45_000 : true;
-      const isValidSdp = !!sdp && typeof sdp === "object";
-      if (!Number.isFinite(fromUserId) || !isValidSdp || !isFresh) {
-        sessionStorage.removeItem(PENDING_CALL_STORAGE_KEY);
-        return;
-      }
-      pendingOfferFromRef.current = fromUserId;
-      pendingOfferRef.current = sdp as RTCSessionDescriptionInit;
-      setIncomingCallFromUserId(fromUserId);
-      startRinging("incoming");
-    } catch {
-      sessionStorage.removeItem(PENDING_CALL_STORAGE_KEY);
-    }
-  }, [incomingCallFromUserId, isAcceptingIncomingCall, isCalling, isInCall, startRinging]);
-
-  useEffect(() => {
-    if (!incomingCallFromUserId || isInCall) return;
+    if (!incomingCall || isInCall) return;
     const ensureRing = () => startRinging("incoming");
     window.addEventListener("pointerdown", ensureRing, { once: true });
     window.addEventListener("keydown", ensureRing, { once: true });
@@ -867,7 +1215,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       window.removeEventListener("pointerdown", ensureRing);
       window.removeEventListener("keydown", ensureRing);
     };
-  }, [incomingCallFromUserId, isInCall, startRinging]);
+  }, [incomingCall, isInCall, startRinging]);
 
   useEffect(() => {
     if (!isScreenSharing || !screenShareStreamRef.current) {
@@ -878,16 +1226,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   }, [isScreenSharing]);
 
   useEffect(() => {
-    if (!hasRemotePresentationVideo || !remotePresentationStreamRef.current) {
-      setElementStream(remotePresentationVideoRef.current, null);
-      return;
-    }
-    setElementStream(remotePresentationVideoRef.current, remotePresentationStreamRef.current);
-  }, [hasRemotePresentationVideo]);
-
-  useEffect(() => {
     const handleFullscreenChange = () => {
-      if (typeof document === "undefined") return;
       setIsPresentationFullscreen(document.fullscreenElement === presentationStageRef.current);
     };
 
@@ -910,8 +1249,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     return () => {
-      const hasPendingIncomingOffer = !!pendingOfferRef.current && !!pendingOfferFromRef.current;
-      stopCurrentSession(false, !hasPendingIncomingOffer);
+      stopCurrentSession(false);
       if (audioContextRef.current) {
         void audioContextRef.current.close();
         audioContextRef.current = null;
@@ -919,73 +1257,36 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     };
   }, [stopCurrentSession]);
 
-  const callUserId = incomingCallFromUserId ?? connectedPeerUserId;
-  const isBusy = !!incomingCallFromUserId || isCalling || isInCall || isAcceptingIncomingCall;
-  const isDialogVisible = isBusy;
-  const callUser = callUserId ? (users || []).find((entry) => entry.id === callUserId) : null;
-  const callUserName = callUser?.name || (callUserId ? `User ${callUserId}` : "Unknown user");
-  const callUserInitials = callUserName
+  const primaryRemoteUserId = incomingCall?.fromUserId ?? remoteParticipantIds[0] ?? pendingInviteIds[0] ?? null;
+  const isBusy = !!incomingCall || isCalling || isInCall;
+  const sessionParticipantIds = Array.from(new Set(
+    [user?.id, ...remoteParticipantIds, ...pendingInviteIds].filter((id): id is number => typeof id === "number" && Number.isFinite(id))
+  ));
+  const primaryRemoteName = getUserName(primaryRemoteUserId);
+  const primaryRemoteInitials = primaryRemoteName
     .split(" ")
     .map((part) => part.charAt(0))
     .join("")
     .slice(0, 2)
     .toUpperCase();
-  const callStatusTitle = incomingCallFromUserId
-    ? (isAcceptingIncomingCall ? "Joining call..." : "Incoming call")
-    : isInCall
-      ? "Call in progress"
-      : isAcceptingIncomingCall
-        ? "Joining call..."
-        : "Calling...";
-  const callStatusDescription = incomingCallFromUserId
-    ? (isAcceptingIncomingCall
-      ? `Connecting you with ${callUserName}...`
-      : `${callUserName} wants to connect with you.`)
-    : isInCall
-      ? `You're connected with ${callUserName}.`
-      : isAcceptingIncomingCall
-        ? `Connecting you with ${callUserName}...`
-        : `Trying to connect with ${callUserName}...`;
-  const presentationOwnerLabel = isScreenSharing ? "You're presenting" : `${callUserName} is presenting`;
-  const presentationHint = isScreenSharing
-    ? "Your screen is being shared and stays pinned inside this call dialog."
-    : isRemoteScreenSharing
-      ? "The shared screen stays in focus here, no matter which page you open."
-      : "Start screen sharing from below when the call connects.";
-  const presentationSourceLabel = isScreenSharing ? screenShareLabel : remoteScreenShareLabel;
-  const shouldShowPresentationStage = isScreenSharing || hasRemotePresentationVideo;
-  const canTogglePresentationFullscreen = typeof document !== "undefined" && document.fullscreenEnabled !== false;
-
-  useEffect(() => {
-    if (isBusy) return;
-    if (typeof document === "undefined") return;
-    if (document.fullscreenElement !== presentationStageRef.current) return;
-    void document.exitFullscreen().catch(() => {
-      // Ignore fullscreen cleanup issues when the dialog closes.
-    });
-  }, [isBusy]);
-
-  const togglePresentationFullscreen = useCallback(async () => {
-    const stageElement = presentationStageRef.current;
-    if (!stageElement || typeof document === "undefined") return;
-
-    try {
-      if (document.fullscreenElement === stageElement) {
-        await document.exitFullscreen();
-      } else {
-        await stageElement.requestFullscreen();
-      }
-    } catch {
-      toast({
-        title: "Fullscreen unavailable",
-        description: "This browser blocked fullscreen for the shared screen preview.",
-        variant: "destructive",
-      });
-    }
-  }, [toast]);
+  const shouldShowPresentationStage = isScreenSharing || isRemoteScreenSharing || isStartingScreenShare;
+  const activeRemotePresentationStream = activeRemotePresenterUserId
+    ? remotePresentationStreamsRef.current.get(activeRemotePresenterUserId) || null
+    : null;
+  const availableInvitees = (users || [])
+    .filter((entry) => entry.id !== user?.id)
+    .filter((entry) => !isDeletedCallUser(entry))
+    .filter((entry) => !remoteParticipantIds.includes(entry.id))
+    .filter((entry) => !pendingInviteIds.includes(entry.id));
+  const filteredInvitees = availableInvitees.filter((entry) => {
+    const query = inviteSearch.trim().toLowerCase();
+    if (!query) return true;
+    const haystack = `${entry.name || ""} ${entry.email || ""} ${entry.role || ""}`.toLowerCase();
+    return haystack.includes(query);
+  });
 
   const contextValue = useMemo<CallContextValue>(() => ({
-    callUserId,
+    callUserId: primaryRemoteUserId,
     isBusy,
     isCalling,
     isInCall,
@@ -1003,7 +1304,6 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   }), [
     acceptIncomingCall,
     callDurationSec,
-    callUserId,
     declineIncomingCall,
     isBusy,
     isCalling,
@@ -1012,6 +1312,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     isRemoteScreenSharing,
     isScreenSharing,
     isStartingScreenShare,
+    primaryRemoteUserId,
     startCall,
     stopCurrentSession,
     toggleMute,
@@ -1021,99 +1322,132 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   return (
     <CallContext.Provider value={contextValue}>
       {children}
-      <audio ref={remoteAudioRef} autoPlay />
+      {remoteAudioUserIds.map((remoteAudioUserId) => (
+        <audio
+          key={`remote-audio-${remoteAudioUserId}`}
+          ref={(element) => bindRemoteAudioElement(remoteAudioUserId, element)}
+          autoPlay
+          playsInline
+        />
+      ))}
 
-      <Dialog open={isDialogVisible} onOpenChange={() => {}}>
-        <DialogContent
-          className="!fixed !left-1/2 !top-1/2 !z-[200] !m-0 !max-h-[92vh] !w-[calc(100vw-1.5rem)] sm:!w-[44rem] xl:!w-[64rem] !max-w-[64rem] !translate-x-[-50%] !translate-y-[-50%] overflow-hidden border-border/70 p-0 shadow-2xl sm:rounded-3xl [&>button.absolute]:hidden"
-          onEscapeKeyDown={(event) => event.preventDefault()}
-          onInteractOutside={(event) => event.preventDefault()}
+      {isBusy && !isCallWindowMinimized && (
+        <div
+          className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/12 p-4 backdrop-blur-[1px]"
+          onClick={() => {
+            if (!incomingCall) {
+              setIsCallWindowMinimized(true);
+            }
+          }}
         >
-          <div className="bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-slate-50">
-            <div className="border-b border-white/10 px-6 py-5">
-              <DialogHeader className="space-y-0 text-left">
-                <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                  <div className="flex items-center gap-4">
-                    <Avatar className="h-14 w-14 border border-white/15 bg-white/10">
-                      <AvatarFallback className="bg-white/10 text-sm font-semibold text-slate-100">
-                        {callUserInitials}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div>
-                      <DialogTitle className="text-xl text-slate-50">
-                        {callStatusTitle}
-                      </DialogTitle>
-                      <DialogDescription className="mt-1 text-slate-300">
-                        {callStatusDescription}
-                      </DialogDescription>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-2">
-                    <div className="rounded-full border border-white/10 bg-white/10 px-3 py-1.5 text-sm font-medium text-slate-100">
-                      {isInCall ? formatCallDuration(callDurationSec) : isAcceptingIncomingCall ? "Joining" : "Connecting"}
-                    </div>
-                    {isInCall && (
-                      <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-slate-300">
-                        {isScreenSharing
-                          ? "You are presenting"
-                          : isRemoteScreenSharing
-                            ? `${callUserName} is presenting`
-                            : (isMuted ? "Mic muted" : "Mic active")}
-                      </div>
-                    )}
+          <div
+            className="max-h-[calc(100vh-2rem)] w-[min(92vw,880px)] overflow-hidden rounded-3xl border border-border/70 bg-background shadow-[0_30px_90px_rgba(15,23,42,0.35)]"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="border-b border-border/70 bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 px-6 py-5 text-slate-50">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex items-center gap-4">
+                  <Avatar className="h-14 w-14 border border-white/15 bg-white/10">
+                    <AvatarFallback className="bg-white/10 text-sm font-semibold text-slate-100">
+                      {primaryRemoteInitials}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div>
+                    <p className="text-lg font-semibold">
+                      {incomingCall ? "Incoming call" : isInCall ? "Call in progress" : "Calling..."}
+                    </p>
+                    <p className="mt-1 text-sm text-slate-300">
+                      {incomingCall
+                        ? `${primaryRemoteName} wants to connect with you.`
+                        : isInCall
+                          ? `You can keep using chat and the rest of the app while the call stays here.`
+                          : `Trying to connect with ${primaryRemoteName}...`}
+                    </p>
                   </div>
                 </div>
-              </DialogHeader>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="rounded-full border border-white/10 bg-white/10 px-3 py-1.5 text-sm font-medium text-slate-100">
+                    {isInCall ? formatCallDuration(callDurationSec) : "Connecting"}
+                  </div>
+                  <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-slate-300">
+                    {sessionParticipantIds.length} participant{sessionParticipantIds.length === 1 ? "" : "s"}
+                  </div>
+                  {!incomingCall && (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="border border-white/10 bg-white/10 text-slate-50 hover:bg-white/15 hover:text-slate-50"
+                      onClick={() => setIsCallWindowMinimized(true)}
+                    >
+                      <Minimize2 className="mr-2 h-4 w-4" />
+                      Minimize
+                    </Button>
+                  )}
+                </div>
+              </div>
+
+              {sessionParticipantIds.length > 1 && (
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {sessionParticipantIds.map((participantId) => {
+                    const participantName = participantId === user?.id ? "You" : getUserName(participantId);
+                    const isPending = pendingInviteIds.includes(participantId);
+                    return (
+                      <div
+                        key={`participant-${participantId}`}
+                        className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/8 px-3 py-1.5 text-xs text-slate-100"
+                      >
+                        <Users className="h-3.5 w-3.5 text-slate-300" />
+                        <span>{participantName}</span>
+                        {isPending && <span className="text-slate-400">Inviting</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
-            <div className="space-y-5 px-6 py-6">
+            <div className="max-h-[calc(100vh-12rem)] overflow-y-auto p-5">
               {shouldShowPresentationStage ? (
                 <div
                   ref={presentationStageRef}
-                  className="overflow-hidden rounded-3xl border border-white/10 bg-slate-900 shadow-[0_30px_80px_rgba(15,23,42,0.45)]"
+                  className="overflow-hidden rounded-3xl border border-border/70 bg-slate-950"
                 >
-                  <div className="flex items-center justify-between gap-3 border-b border-white/10 bg-white/5 px-4 py-3">
+                  <div className="flex flex-col gap-3 border-b border-white/10 bg-white/5 px-4 py-3 text-slate-50 md:flex-row md:items-center md:justify-between">
                     <div className="min-w-0">
                       <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-100">
                         <Presentation className="h-3.5 w-3.5" />
-                        <span>{presentationOwnerLabel}</span>
+                        <span>
+                          {isStartingScreenShare
+                            ? "Preparing share"
+                            : isScreenSharing
+                              ? "You're presenting"
+                              : `${getUserName(activeRemotePresenterUserId)} is presenting`}
+                        </span>
                       </div>
                       <p className="mt-2 truncate text-sm font-medium text-slate-100">
-                        {presentationSourceLabel || "Choose a screen, tab, or window to present."}
+                        {isScreenSharing ? screenShareLabel : remoteScreenShareLabel || "Choose a screen, tab, or window to present."}
                       </p>
                       <p className="mt-1 text-xs text-slate-300">
-                        {presentationHint}
+                        {isScreenSharing
+                          ? "Screen share is live and the call controls stay available below."
+                          : "Remote presentation stays pinned here while you keep using the app."}
                       </p>
                     </div>
-
                     <div className="flex items-center gap-2">
-                      {canTogglePresentationFullscreen && (
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          className="border border-white/10 bg-white/10 text-slate-50 hover:bg-white/15 hover:text-slate-50"
-                          onClick={() => void togglePresentationFullscreen()}
-                        >
-                          {isPresentationFullscreen ? (
-                            <Minimize2 className="mr-2 h-4 w-4" />
-                          ) : (
-                            <Maximize2 className="mr-2 h-4 w-4" />
-                          )}
-                          {isPresentationFullscreen ? "Exit full screen" : "Full screen"}
-                        </Button>
-                      )}
-                      {isScreenSharing && (
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          className="border border-white/10 bg-white/10 text-slate-50 hover:bg-white/15 hover:text-slate-50"
-                          onClick={() => void toggleScreenShare()}
-                        >
-                          <ScreenShareOff className="mr-2 h-4 w-4" />
-                          Stop sharing
-                        </Button>
-                      )}
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        className="border border-white/10 bg-white/10 text-slate-50 hover:bg-white/15 hover:text-slate-50"
+                        onClick={() => void togglePresentationFullscreen()}
+                      >
+                        {isPresentationFullscreen ? (
+                          <Minimize2 className="mr-2 h-4 w-4" />
+                        ) : (
+                          <Maximize2 className="mr-2 h-4 w-4" />
+                        )}
+                        {isPresentationFullscreen ? "Exit full screen" : "Full screen"}
+                      </Button>
                     </div>
                   </div>
 
@@ -1126,7 +1460,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
                         muted
                         className="h-full w-full bg-black object-contain"
                       />
-                    ) : hasRemotePresentationVideo ? (
+                    ) : activeRemotePresentationStream ? (
                       <video
                         ref={remotePresentationVideoRef}
                         autoPlay
@@ -1135,18 +1469,18 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
                         className="h-full w-full bg-black object-contain"
                       />
                     ) : (
-                      <div className="flex h-full w-full flex-col items-center justify-center gap-4 px-6 text-center">
+                      <div className="flex h-full w-full flex-col items-center justify-center gap-4 px-6 text-center text-slate-100">
                         {isStartingScreenShare ? (
-                          <Loader2 className="h-9 w-9 animate-spin text-slate-200" />
+                          <Loader2 className="h-8 w-8 animate-spin text-slate-200" />
                         ) : (
-                          <ScreenShare className="h-9 w-9 text-slate-200" />
+                          <ScreenShare className="h-8 w-8 text-slate-200" />
                         )}
                         <div>
-                          <p className="text-sm font-medium text-slate-100">
+                          <p className="text-sm font-medium">
                             {isStartingScreenShare ? "Opening your browser share picker..." : "Waiting for the shared screen feed"}
                           </p>
                           <p className="mt-1 text-xs text-slate-300">
-                            The screen stream will appear here as soon as it becomes available.
+                            We will only show the presentation here after screen sharing actually starts.
                           </p>
                         </div>
                       </div>
@@ -1154,37 +1488,34 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
                   </div>
                 </div>
               ) : (
-                <div className="rounded-3xl border border-white/10 bg-white/5 px-6 py-10">
+                <div className="rounded-3xl border border-border/70 bg-muted/20 px-6 py-10">
                   <div className="flex flex-col items-center justify-center text-center">
                     <div className="relative">
-                      <div className="absolute inset-0 animate-ping rounded-full bg-blue-500/20" />
-                      <Avatar className="relative h-24 w-24 border border-white/10 bg-white/10">
-                        <AvatarFallback className="bg-white/10 text-2xl font-semibold text-slate-100">
-                          {callUserInitials}
+                      <div className="absolute inset-0 animate-ping rounded-full bg-primary/15" />
+                      <Avatar className="relative h-24 w-24 border border-border/60 bg-primary/5">
+                        <AvatarFallback className="bg-primary/10 text-2xl font-semibold text-primary">
+                          {primaryRemoteInitials}
                         </AvatarFallback>
                       </Avatar>
                     </div>
-                    <p className="mt-5 text-lg font-semibold text-slate-50">{callUserName}</p>
-                    <p className="mt-2 max-w-md text-sm text-slate-300">
-                      {incomingCallFromUserId
-                        ? "Accept the call to join instantly, or decline if you're not ready."
-                        : isStartingScreenShare
-                          ? "Choose a screen, tab, or window from the browser picker. The presentation panel will appear right after sharing starts."
+                    <p className="mt-5 text-lg font-semibold text-foreground">{primaryRemoteName}</p>
+                    <p className="mt-2 max-w-lg text-sm text-muted-foreground">
+                      {incomingCall
+                        ? "Accept or decline from here. Once connected, mute, screen share, add people, and end call all stay in this same call window."
                         : isInCall
-                          ? "Call controls stay here, so you can keep working anywhere else in the app."
-                          : "We're trying to connect the call. Once connected, mute, timer, and screen share will stay in this same dialog."}
+                          ? "Use Minimize to check chat or any other flow while the call keeps running."
+                          : "We're trying to connect the call. You can minimize this window if you want to keep browsing the app."}
                     </p>
                   </div>
                 </div>
               )}
 
-              {incomingCallFromUserId ? (
-                <div className="flex flex-wrap items-center justify-center gap-3">
+              {incomingCall ? (
+                <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
                   <Button
                     type="button"
                     variant="outline"
-                    className="min-w-32 border-white/15 bg-white/5 text-slate-100 hover:bg-white/10 hover:text-slate-50"
-                    disabled={isAcceptingIncomingCall}
+                    className="min-w-32"
                     onClick={declineIncomingCall}
                   >
                     <PhoneOff className="mr-2 h-4 w-4" />
@@ -1192,24 +1523,19 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
                   </Button>
                   <Button
                     type="button"
-                    className="min-w-32 bg-emerald-500 text-white hover:bg-emerald-400"
-                    disabled={isAcceptingIncomingCall}
+                    className="min-w-32 bg-emerald-600 text-white hover:bg-emerald-500"
                     onClick={() => void acceptIncomingCall()}
                   >
-                    {isAcceptingIncomingCall ? (
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    ) : (
-                      <Phone className="mr-2 h-4 w-4" />
-                    )}
-                    {isAcceptingIncomingCall ? "Joining..." : "Accept"}
+                    <Phone className="mr-2 h-4 w-4" />
+                    Accept
                   </Button>
                 </div>
               ) : (
-                <div className="flex flex-wrap items-center justify-center gap-3">
+                <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
                   <Button
                     type="button"
                     variant={isMuted ? "default" : "outline"}
-                    className={isMuted ? "min-w-32 bg-amber-500 text-white hover:bg-amber-400" : "min-w-32 border-white/15 bg-white/5 text-slate-100 hover:bg-white/10 hover:text-slate-50"}
+                    className="min-w-32"
                     disabled={!isInCall}
                     onClick={toggleMute}
                   >
@@ -1219,8 +1545,8 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
                   <Button
                     type="button"
                     variant={isScreenSharing ? "default" : "outline"}
-                    className={isScreenSharing ? "min-w-40 bg-blue-600 text-white hover:bg-blue-500" : "min-w-40 border-white/15 bg-white/5 text-slate-100 hover:bg-white/10 hover:text-slate-50"}
-                    disabled={!isInCall || isCalling || isStartingScreenShare || (!isScreenSharing && isRemoteScreenSharing)}
+                    className="min-w-40"
+                    disabled={!isInCall || isStartingScreenShare || (!isScreenSharing && isRemoteScreenSharing)}
                     onClick={() => void toggleScreenShare()}
                   >
                     {isStartingScreenShare ? (
@@ -1234,6 +1560,16 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
                   </Button>
                   <Button
                     type="button"
+                    variant="secondary"
+                    className="min-w-36"
+                    disabled={!sessionIdRef.current}
+                    onClick={() => setIsAddPeopleOpen(true)}
+                  >
+                    <UserPlus className="mr-2 h-4 w-4" />
+                    Add people
+                  </Button>
+                  <Button
+                    type="button"
                     variant="destructive"
                     className="min-w-32"
                     onClick={() => stopCurrentSession(true)}
@@ -1243,10 +1579,134 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
                   </Button>
                 </div>
               )}
+
             </div>
           </div>
-        </DialogContent>
-      </Dialog>
+        </div>
+      )}
+
+      {isBusy && isAddPeopleOpen && !incomingCall && (
+        <div
+          className="fixed inset-0 z-[130] flex items-center justify-center bg-slate-950/25 p-4"
+          onClick={() => {
+            setIsAddPeopleOpen(false);
+            setInviteSearch("");
+            setSelectedInviteeIds([]);
+          }}
+        >
+          <div
+            className="w-[min(92vw,34rem)] rounded-3xl border border-border/70 bg-background shadow-[0_30px_90px_rgba(15,23,42,0.35)]"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="border-b border-border/70 px-5 py-4">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-lg font-semibold text-foreground">Add more people</p>
+                  <p className="mt-1 text-sm text-muted-foreground">Search teammates and invite them into the current call.</p>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setIsAddPeopleOpen(false);
+                    setInviteSearch("");
+                    setSelectedInviteeIds([]);
+                  }}
+                >
+                  Close
+                </Button>
+              </div>
+              <Input
+                value={inviteSearch}
+                onChange={(event) => setInviteSearch(event.target.value)}
+                placeholder="Search by name or email..."
+                className="mt-4"
+              />
+            </div>
+
+            <div className="max-h-[22rem] space-y-2 overflow-y-auto px-5 py-4">
+              {filteredInvitees.map((member) => {
+                const isSelected = selectedInviteeIds.includes(member.id);
+                return (
+                  <button
+                    key={`invitee-${member.id}`}
+                    type="button"
+                    className={`flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors ${
+                      isSelected ? "border-primary bg-primary/5" : "border-border hover:bg-muted/40"
+                    }`}
+                    onClick={() => {
+                      setSelectedInviteeIds((prev) => {
+                        if (prev.includes(member.id)) {
+                          return prev.filter((id) => id !== member.id);
+                        }
+                        return [...prev, member.id];
+                      });
+                    }}
+                  >
+                    <div>
+                      <p className="text-sm font-medium text-foreground">{member.name}</p>
+                      <p className="text-xs text-muted-foreground">{member.email || member.role || "Team member"}</p>
+                    </div>
+                    <div className={`rounded-full px-2 py-1 text-[11px] font-medium ${isSelected ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
+                      {isSelected ? "Selected" : "Tap to add"}
+                    </div>
+                  </button>
+                );
+              })}
+
+              {filteredInvitees.length === 0 && (
+                <div className="rounded-xl border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">
+                  {availableInvitees.length === 0
+                    ? "No more teammates are available to add right now."
+                    : "No teammate matched your search."}
+                </div>
+              )}
+            </div>
+
+            <div className="flex flex-wrap justify-end gap-2 border-t border-border/70 px-5 py-4">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setIsAddPeopleOpen(false);
+                  setInviteSearch("");
+                  setSelectedInviteeIds([]);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                disabled={selectedInviteeIds.length === 0}
+                onClick={() => {
+                  void inviteParticipants(selectedInviteeIds);
+                  setIsAddPeopleOpen(false);
+                  setInviteSearch("");
+                  setSelectedInviteeIds([]);
+                }}
+              >
+                Add to call
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isBusy && isCallWindowMinimized && !incomingCall && (
+        <div className="fixed bottom-4 right-4 z-[120] flex items-center gap-2 rounded-full border border-border/70 bg-background px-3 py-2 shadow-[0_20px_50px_rgba(15,23,42,0.25)]">
+          <div className="px-1">
+            <p className="text-sm font-medium text-foreground">{isInCall ? primaryRemoteName : "Call in progress"}</p>
+            <p className="text-xs text-muted-foreground">{isInCall ? formatCallDuration(callDurationSec) : "Connecting"}</p>
+          </div>
+          <Button type="button" variant="outline" size="sm" onClick={() => setIsCallWindowMinimized(false)}>
+            <Maximize2 className="mr-2 h-4 w-4" />
+            Open
+          </Button>
+          <Button type="button" variant="destructive" size="sm" onClick={() => stopCurrentSession(true)}>
+            <PhoneOff className="h-4 w-4" />
+          </Button>
+        </div>
+      )}
     </CallContext.Provider>
   );
 }

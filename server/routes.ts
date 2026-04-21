@@ -287,6 +287,45 @@ export async function registerRoutes(
     });
   };
 
+  const parseSessionIdFromCookieHeader = (cookieHeader: string | undefined) => {
+    if (!cookieHeader) return null;
+    const encodedSessionCookie = cookieHeader
+      .split(";")
+      .map((entry) => entry.trim())
+      .find((entry) => entry.startsWith("connect.sid="))
+      ?.slice("connect.sid=".length);
+
+    if (!encodedSessionCookie) return null;
+
+    const decodedSessionCookie = decodeURIComponent(encodedSessionCookie);
+    if (decodedSessionCookie.startsWith("s:")) {
+      const unsignedValue = decodedSessionCookie.slice(2);
+      const signatureSeparatorIndex = unsignedValue.lastIndexOf(".");
+      return signatureSeparatorIndex > 0
+        ? unsignedValue.slice(0, signatureSeparatorIndex)
+        : unsignedValue;
+    }
+
+    return decodedSessionCookie || null;
+  };
+
+  const revokeUserSockets = (userId: number, reason: "signed_in_elsewhere" | "account_deactivated" | "logged_out") => {
+    const sockets = wsClientsByUserId.get(userId);
+    if (!sockets || sockets.size === 0) return;
+
+    const payload = JSON.stringify({
+      type: "auth:session-revoked",
+      payload: { reason },
+    });
+
+    sockets.forEach((socket) => {
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.send(payload);
+      }
+      socket.close(4001, "Session revoked");
+    });
+  };
+
   const pushUnreadUpdate = async (userId: number) => {
     const counts = await storage.getUnreadCountsForUser(userId);
     emitToUser(userId, { type: "unread:update", payload: counts });
@@ -411,10 +450,17 @@ export async function registerRoutes(
   wss.on("connection", async (socket, req) => {
     const url = new URL(req.url || "", "http://localhost");
     const userId = Number(url.searchParams.get("userId"));
+    const cookieSessionId = parseSessionIdFromCookieHeader(req.headers.cookie);
+    const activeSessionId = Number.isFinite(userId) ? activeSessionByUserId.get(userId) : null;
     let activeRoomUserId: number | null = null;
     let activeTaskGroupId: number | null = null;
     if (!Number.isFinite(userId)) {
       socket.close();
+      return;
+    }
+
+    if (!activeSessionId || !cookieSessionId || cookieSessionId !== activeSessionId) {
+      socket.close(4001, "Unauthorized");
       return;
     }
 
@@ -661,6 +707,7 @@ export async function registerRoutes(
 
       const existingSessionId = activeSessionByUserId.get(user.id);
       if (existingSessionId && existingSessionId !== req.sessionID) {
+        revokeUserSockets(user.id, "signed_in_elsewhere");
         req.sessionStore.destroy(existingSessionId, () => {
           // ignore destroy errors
         });
@@ -686,6 +733,7 @@ export async function registerRoutes(
       if (activeSessionId === req.sessionID) {
         activeSessionByUserId.delete(req.session.userId);
       }
+      revokeUserSockets(req.session.userId, "logged_out");
     }
     req.session.destroy((err) => {
       if (err) {
@@ -832,6 +880,7 @@ export async function registerRoutes(
 
         const activeSessionId = activeSessionByUserId.get(id);
         if (activeSessionId) {
+          revokeUserSockets(id, "account_deactivated");
           req.sessionStore.destroy(activeSessionId, () => {
             // ignore destroy errors
           });
