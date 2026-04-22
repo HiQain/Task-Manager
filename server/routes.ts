@@ -646,7 +646,7 @@ export async function registerRoutes(
             void storage
               .markMessagesAsRead(userId, activeRoomUserId)
               .then(() => pushUnreadUpdate(userId))
-              .catch(() => {});
+              .catch(() => { });
           }
           return;
         }
@@ -2348,6 +2348,40 @@ export async function registerRoutes(
     await pushUnreadUpdate(message.fromUserId);
     await pushUnreadUpdate(message.toUserId);
     res.json({ success: true });
+  });
+
+  app.post(api.chats.clear.path, async (req, res) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+
+    const otherUserId = Number(req.params.userId);
+    if (!Number.isFinite(otherUserId)) {
+      return res.status(400).json({ message: "Invalid user id" });
+    }
+    if (otherUserId === req.user.id) {
+      return res.status(400).json({ message: "Cannot clear chat with yourself" });
+    }
+
+    const otherUser = await storage.getUser(otherUserId);
+    if (!otherUser) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const deletedCount = await storage.clearConversation(req.user.id, otherUserId);
+
+    emitToUser(req.user.id, {
+      type: "chat:cleared",
+      payload: { userId: otherUserId, deletedCount },
+    });
+    emitToUser(otherUserId, {
+      type: "chat:cleared",
+      payload: { userId: req.user.id, deletedCount },
+    });
+    await pushUnreadUpdate(req.user.id);
+    await pushUnreadUpdate(otherUserId);
+
+    res.json({ success: true, deletedCount });
   });
 
   app.get(api.chats.groups.path, async (req, res) => {

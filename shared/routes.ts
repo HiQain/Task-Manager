@@ -248,6 +248,16 @@ export const api = {
         404: errorSchemas.notFound,
       },
     },
+    clear: {
+      method: 'POST' as const,
+      path: '/api/chats/messages/:userId/clear',
+      responses: {
+        200: z.object({ success: z.boolean(), deletedCount: z.number() }),
+        400: errorSchemas.validation,
+        401: errorSchemas.notFound,
+        404: errorSchemas.notFound,
+      },
+    },
     markRead: {
       method: 'POST' as const,
       path: '/api/chats/read/:userId',

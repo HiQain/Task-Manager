@@ -420,74 +420,74 @@ export default function BoardView() {
       </div>
 
       <DragDropContext onDragEnd={onDragEnd}>
-        <div className="overflow-x-auto pb-2 [-webkit-overflow-scrolling:touch]">
-          <div className="flex min-w-max gap-4 lg:gap-6">
+        <div className="overflow-x-hidden pb-2">
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-4">
             {COLUMNS.map((column) => (
-              <div key={column.id} className="flex w-[280px] shrink-0 flex-col sm:w-[320px] xl:w-[340px]">
-              <div className="flex items-center justify-between mb-4 px-1">
-                <div className="flex items-center gap-2">
-                  <div className={`w-2 h-2 rounded-full ${column.color}`} />
-                  <h3 className="font-semibold text-sm text-muted-foreground uppercase tracking-wider">
-                    {column.title}
-                  </h3>
-                  <span className="bg-muted text-muted-foreground text-xs px-2 py-0.5 rounded-full font-medium">
-                    {tasksByStatus[column.id]?.length || 0}
-                  </span>
+              <div key={column.id} className="flex min-w-0 flex-col">
+                <div className="mb-4 flex items-center justify-between px-1">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className={`h-2 w-2 shrink-0 rounded-full ${column.color}`} />
+                    <h3 className="truncate text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+                      {column.title}
+                    </h3>
+                    <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                      {tasksByStatus[column.id]?.length || 0}
+                    </span>
+                  </div>
                 </div>
-              </div>
 
-              <div className={`min-h-[520px] rounded-xl border border-border/50 p-3 ${column.panelClassName}`}>
-                <Droppable droppableId={column.id}>
-                  {(provided, snapshot) => (
-                    <div
-                      {...provided.droppableProps}
-                      ref={provided.innerRef}
-                      className={`h-full min-h-[490px] transition-colors ${snapshot.isDraggingOver ? "bg-muted/50 rounded-lg" : ""}`}
-                    >
-                      {tasksByStatus[column.id]?.map((task: Task, index: number) => (
-                        <TaskCard
-                          key={task.id}
-                          task={task}
-                          index={index}
-                          canEdit={!!user?.id && (
-                            task.createdById === user.id ||
-                            user.role === "admin"
-                          )}
-                          canMove={task.status === "trash"
-                            ? !!user?.id && (task.createdById === user.id || user.role === "admin")
-                            : !!user?.id && (
-                              user.role === "admin" ||
+                <div className={`min-h-[520px] rounded-xl border border-border/50 p-3 ${column.panelClassName}`}>
+                  <Droppable droppableId={column.id}>
+                    {(provided, snapshot) => (
+                      <div
+                        {...provided.droppableProps}
+                        ref={provided.innerRef}
+                        className={`h-full min-h-[490px] min-w-0 transition-colors ${snapshot.isDraggingOver ? "rounded-lg bg-muted/50" : ""}`}
+                      >
+                        {tasksByStatus[column.id]?.map((task: Task, index: number) => (
+                          <TaskCard
+                            key={task.id}
+                            task={task}
+                            index={index}
+                            canEdit={!!user?.id && (
                               task.createdById === user.id ||
-                              getAssignedToIds(task).includes(user.id)
+                              user.role === "admin"
                             )}
-                          onEdit={handleEdit}
-                          onDelete={handleDelete}
-                          onRestore={handleRestore}
-                          onPermanentDelete={handlePermanentDelete}
-                          onView={handleView}
-                          onMessage={(task) => {
-                            void handleMessage(task);
-                          }}
-                        />
-                      ))}
-                      {provided.placeholder}
+                            canMove={task.status === "trash"
+                              ? !!user?.id && (task.createdById === user.id || user.role === "admin")
+                              : !!user?.id && (
+                                user.role === "admin" ||
+                                task.createdById === user.id ||
+                                getAssignedToIds(task).includes(user.id)
+                              )}
+                            onEdit={handleEdit}
+                            onDelete={handleDelete}
+                            onRestore={handleRestore}
+                            onPermanentDelete={handlePermanentDelete}
+                            onView={handleView}
+                            onMessage={(task) => {
+                              void handleMessage(task);
+                            }}
+                          />
+                        ))}
+                        {provided.placeholder}
 
-                      {!!user?.id && column.id !== "trash" && (
-                        <button
-                          onClick={() => {
-                            setEditingTask(null);
-                            setIsDialogOpen(true);
-                          }}
-                          className="w-full py-2.5 flex items-center justify-center gap-2 text-sm text-muted-foreground hover:bg-background/80 hover:text-foreground rounded-lg border border-dashed border-border/60 hover:border-primary/50 transition-all mt-2"
-                        >
-                          <Plus className="w-4 h-4" />
-                          Add Task
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </Droppable>
-              </div>
+                        {!!user?.id && column.id !== "trash" && (
+                          <button
+                            onClick={() => {
+                              setEditingTask(null);
+                              setIsDialogOpen(true);
+                            }}
+                            className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-border/60 py-2.5 text-sm text-muted-foreground transition-all hover:border-primary/50 hover:bg-background/80 hover:text-foreground"
+                          >
+                            <Plus className="h-4 w-4" />
+                            Add Task
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </Droppable>
+                </div>
               </div>
             ))}
           </div>

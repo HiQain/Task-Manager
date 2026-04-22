@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { ChevronDown, ChevronLeft, ChevronRight, CornerUpLeft, Download, Eye, FileText, Forward, Loader2, MoreHorizontal, Paperclip, Pencil, Phone, Search, Send, Trash2, X } from "lucide-react";
 import { useCall } from "@/components/CallProvider";
 import { useAuth } from "@/hooks/use-auth";
-import { useChatUsers, useDeleteMessage, useDeleteTaskGroupMessage, useMarkChatRead, useMarkTaskGroupRead, useMessages, useSendAnyMessage, useSendMessage, useSendTaskGroupMessage, useSendTaskGroupMessageToTask, useTaskGroupMessages, useTaskGroupUnreadCounts, useTaskGroups, useUnreadCounts, useUpdateMessage, useUpdateTaskGroupMessage } from "@/hooks/use-chat";
+import { useChatUsers, useClearConversation, useDeleteMessage, useDeleteTaskGroupMessage, useMarkChatRead, useMarkTaskGroupRead, useMessages, useSendAnyMessage, useSendMessage, useSendTaskGroupMessage, useSendTaskGroupMessageToTask, useTaskGroupMessages, useTaskGroupUnreadCounts, useTaskGroups, useUnreadCounts, useUpdateMessage, useUpdateTaskGroupMessage } from "@/hooks/use-chat";
 import { useUsers } from "@/hooks/use-users";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
@@ -157,6 +157,25 @@ function summarizeMessageReference(reference: MessageReference) {
     return `${reference.attachmentsCount} attachment${reference.attachmentsCount > 1 ? "s" : ""}`;
   }
   return "Message";
+}
+
+function matchesConversationSearch(
+  parsed: ReturnType<typeof decodeMessagePayload>,
+  senderName: string,
+  query: string,
+) {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) return false;
+
+  const text = parsed.text.toLowerCase();
+  if (text.includes(normalizedQuery)) return true;
+
+  if (senderName.toLowerCase().includes(normalizedQuery)) return true;
+
+  return parsed.attachments.some((attachment) =>
+    attachment.name.toLowerCase().includes(normalizedQuery)
+    || attachment.type.toLowerCase().includes(normalizedQuery)
+  );
 }
 
 function getMentionToken(value: string) {
@@ -318,6 +337,10 @@ export default function Chat() {
   const wsRef = useRef<WebSocket | null>(null);
   const [presenceByUserId, setPresenceByUserId] = useState<Record<number, { isOnline: boolean; lastSeenAt: string | null }>>({});
   const [typingByUserId, setTypingByUserId] = useState<Record<number, boolean>>({});
+  const [isChatSearchOpen, setIsChatSearchOpen] = useState(false);
+  const [chatSearchQuery, setChatSearchQuery] = useState("");
+  const [conversationAction, setConversationAction] = useState<"clear" | "delete" | null>(null);
+  const [highlightedMessageId, setHighlightedMessageId] = useState<number | null>(null);
 
   useEffect(() => {
     if (activeTaskGroupId !== undefined && activeTaskGroupId !== null) {
@@ -330,6 +353,7 @@ export default function Chat() {
   const typingTargetUserIdRef = useRef<number | undefined>(undefined);
   const sentTypingRef = useRef(false);
   const duplicateChoiceResolverRef = useRef<((choice: "replace" | "duplicate") => void) | null>(null);
+  const highlightTimeoutRef = useRef<number | null>(null);
 
   const allKnownUsers = useMemo(() => {
     const list = [...(users || []), ...(chatUsers || []), ...(user ? [user] : [])];
@@ -371,6 +395,15 @@ export default function Chat() {
       if (duplicateChoiceResolverRef.current) {
         duplicateChoiceResolverRef.current("duplicate");
         duplicateChoiceResolverRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (highlightTimeoutRef.current) {
+        window.clearTimeout(highlightTimeoutRef.current);
+        highlightTimeoutRef.current = null;
       }
     };
   }, []);
@@ -461,6 +494,17 @@ export default function Chat() {
     setLocation("/chat");
   }, [activeUserId, teamMembers, setLocation]);
 
+  useEffect(() => {
+    setConversationAction(null);
+    setIsChatSearchOpen(false);
+    setChatSearchQuery("");
+    setHighlightedMessageId(null);
+    if (highlightTimeoutRef.current) {
+      window.clearTimeout(highlightTimeoutRef.current);
+      highlightTimeoutRef.current = null;
+    }
+  }, [activeUserId, activeTaskGroupId]);
+
   const activeUser = useMemo(
     () => teamMembers.find((u) => u.id === activeUserId),
     [teamMembers, activeUserId]
@@ -500,6 +544,7 @@ export default function Chat() {
   const sendMessage = useSendMessage(activeUserId);
   const updateMessage = useUpdateMessage(activeUserId);
   const deleteMessage = useDeleteMessage(activeUserId);
+  const clearConversation = useClearConversation(activeUserId);
   const sendAnyMessage = useSendAnyMessage();
   const { data: taskGroupMessages, isLoading: isTaskGroupMessagesLoading } = useTaskGroupMessages(activeTaskGroupId);
   const sendTaskGroupMessage = useSendTaskGroupMessage(activeTaskGroupId);
@@ -739,6 +784,7 @@ export default function Chat() {
   const updatePending = updateMessage.isPending || updateTaskGroupMessage.isPending;
   const submitPending = sendPending || updatePending;
   const deletePending = deleteMessage.isPending || deleteTaskGroupMessage.isPending;
+  const conversationActionPending = clearConversation.isPending;
   const isForwardPending = sendAnyMessage.isPending || sendTaskGroupMessageToTask.isPending;
   const displayedMessagesWithParsed = useMemo(
     () => displayedMessages.map((msg) => ({ msg, parsed: decodeMessagePayload(msg.content) })),
@@ -771,6 +817,18 @@ export default function Chat() {
     if (!query) return list;
     return list.filter((entry) => `${entry.label} ${entry.description}`.toLowerCase().includes(query));
   }, [forwardSearch, teamMembers, filteredTaskGroups]);
+  const chatSearchResults = useMemo(() => {
+    if (isGroupMode || !activeUserId) return [];
+    const query = chatSearchQuery.trim();
+    if (!query) return [];
+
+    return displayedMessagesWithParsed.filter(({ msg, parsed }) => {
+      const senderName = msg.fromUserId === user?.id
+        ? "You"
+        : allKnownUsers.find((entry) => entry.id === msg.fromUserId)?.name || "Unknown";
+      return matchesConversationSearch(parsed, senderName, query);
+    });
+  }, [activeUserId, allKnownUsers, chatSearchQuery, displayedMessagesWithParsed, isGroupMode, user?.id]);
 
   const handleSend = async () => {
     if (submitPending) return;
@@ -886,6 +944,74 @@ export default function Chat() {
       attachmentsCount: parsed.attachments.length,
     };
   }, [allKnownUsers, user?.id]);
+
+  const focusMessageById = useCallback((messageId: number) => {
+    setHighlightedMessageId(messageId);
+    if (highlightTimeoutRef.current) {
+      window.clearTimeout(highlightTimeoutRef.current);
+    }
+    highlightTimeoutRef.current = window.setTimeout(() => {
+      setHighlightedMessageId((current) => (current === messageId ? null : current));
+      highlightTimeoutRef.current = null;
+    }, 2600);
+
+    requestAnimationFrame(() => {
+      document.getElementById(`chat-message-${messageId}`)?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    });
+  }, []);
+
+  const runConversationAction = useCallback(async (mode: "clear" | "delete") => {
+    if (!activeUserId) return;
+
+    try {
+      const result = await clearConversation.mutateAsync(activeUserId);
+      const deletedCount = Number(result.deletedCount || 0);
+      setConversationAction(null);
+      setHighlightedMessageId(null);
+      if (highlightTimeoutRef.current) {
+        window.clearTimeout(highlightTimeoutRef.current);
+        highlightTimeoutRef.current = null;
+      }
+
+      if (editingMessage || replyTarget) {
+        setDraft("");
+        setDraftAttachments([]);
+      }
+      setReplyTarget(null);
+      setEditingMessage(null);
+      setMentionQuery("");
+      setIsMentionOpen(false);
+
+      if (mode === "delete") {
+        setDraft("");
+        setDraftAttachments([]);
+        clearActiveConversation();
+        toast({
+          title: deletedCount > 0 ? "Chat deleted" : "Chat closed",
+          description: deletedCount > 0
+            ? `${deletedCount} message${deletedCount === 1 ? "" : "s"} removed and the chat was closed.`
+            : "This chat had no messages, so it was just closed.",
+        });
+        return;
+      }
+
+      toast({
+        title: deletedCount > 0 ? "Chat cleared" : "Chat already empty",
+        description: deletedCount > 0
+          ? `${deletedCount} message${deletedCount === 1 ? "" : "s"} removed from this conversation.`
+          : "There was nothing to clear in this conversation.",
+      });
+    } catch (error) {
+      toast({
+        title: mode === "delete" ? "Delete chat failed" : "Clear chat failed",
+        description: error instanceof Error ? error.message : "Unable to update this conversation.",
+        variant: "destructive",
+      });
+    }
+  }, [activeUserId, clearActiveConversation, clearConversation, editingMessage, replyTarget, toast]);
 
   const handleReplyToMessage = (message: any) => {
     if (editingMessage) {
@@ -1344,6 +1470,47 @@ export default function Chat() {
                   <Phone className="w-4 h-4 sm:mr-2" />
                   <span className="hidden sm:inline">Call</span>
                 </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="h-9 w-9"
+                      disabled={!activeUserId || conversationActionPending}
+                      aria-label="Chat options"
+                    >
+                      <MoreHorizontal className="w-4 h-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-48">
+                    <DropdownMenuItem
+                      disabled={!activeUserId}
+                      onClick={() => {
+                        setIsChatSearchOpen(true);
+                      }}
+                    >
+                      <Search className="mr-2 h-4 w-4" />
+                      Search chat
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      disabled={!activeUserId || conversationActionPending}
+                      onClick={() => setConversationAction("clear")}
+                    >
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      Clear chat
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      className="text-destructive focus:text-destructive"
+                      disabled={!activeUserId || conversationActionPending}
+                      onClick={() => setConversationAction("delete")}
+                    >
+                      <X className="mr-2 h-4 w-4" />
+                      Delete chat
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
             )}
           </div>
@@ -1425,10 +1592,14 @@ export default function Chat() {
                 </div>
               );
               return (
-                <div key={msg.id} className={`group flex w-full items-start gap-2 ${mine ? "justify-end" : "justify-start"}`}>
+                <div
+                  key={msg.id}
+                  id={`chat-message-${msg.id}`}
+                  className={`group flex w-full items-start gap-2 scroll-mt-24 ${mine ? "justify-end" : "justify-start"}`}
+                >
                   {mine && actionMenu}
                   <div
-                    className={`relative max-w-[85%] md:max-w-[70%] rounded-2xl px-3 py-2 border ${mine
+                    className={`relative max-w-[85%] md:max-w-[70%] rounded-2xl px-3 py-2 border transition-shadow ${highlightedMessageId === msg.id ? "ring-2 ring-primary/40 shadow-md" : ""} ${mine
                       ? "bg-primary text-primary-foreground border-primary/30"
                       : "bg-muted/40 text-foreground border-border"
                       }`}
@@ -1722,6 +1893,107 @@ export default function Chat() {
           </form>
         </div>
       </section>
+
+      <Dialog
+        open={isChatSearchOpen}
+        onOpenChange={(open) => {
+          setIsChatSearchOpen(open);
+          if (!open) {
+            setChatSearchQuery("");
+          }
+        }}
+      >
+        <DialogContent className="fixed !top-1/2 !left-1/2 w-[calc(100vw-2rem)] sm:max-w-xl !-translate-x-1/2 !-translate-y-1/2">
+          <DialogHeader>
+            <DialogTitle>Search Chat</DialogTitle>
+            <DialogDescription>
+              {activeUser?.name ? `Find messages in your conversation with ${activeUser.name}.` : "Find messages in this conversation."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Input
+              value={chatSearchQuery}
+              onChange={(event) => setChatSearchQuery(event.target.value)}
+              placeholder="Search messages, sender, or attachment name..."
+              autoFocus
+            />
+
+            <div className="max-h-[22rem] space-y-2 overflow-y-auto rounded-lg border border-border/70 bg-muted/10 p-2">
+              {!chatSearchQuery.trim() ? (
+                <p className="px-2 py-8 text-center text-sm text-muted-foreground">
+                  Type something to search inside this chat.
+                </p>
+              ) : chatSearchResults.length === 0 ? (
+                <p className="px-2 py-8 text-center text-sm text-muted-foreground">
+                  No messages matched your search.
+                </p>
+              ) : (
+                chatSearchResults.map(({ msg, parsed }) => {
+                  const reference = buildMessageReference(msg);
+                  return (
+                    <button
+                      key={`chat-search-result-${msg.id}`}
+                      type="button"
+                      className="flex w-full items-start justify-between gap-3 rounded-lg border border-border/60 bg-background px-3 py-2.5 text-left transition-colors hover:bg-muted/40"
+                      onClick={() => {
+                        setIsChatSearchOpen(false);
+                        setChatSearchQuery("");
+                        focusMessageById(msg.id);
+                      }}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                          {reference.senderName}
+                        </p>
+                        <p className="mt-1 text-sm text-foreground break-words">
+                          {summarizeMessageReference(reference)}
+                        </p>
+                        {parsed.attachments.length > 0 && (
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {parsed.attachments.length} attachment{parsed.attachments.length === 1 ? "" : "s"}
+                          </p>
+                        )}
+                      </div>
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        {msg.createdAt ? new Date(msg.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
+                      </span>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={conversationAction !== null} onOpenChange={(open) => (!open ? setConversationAction(null) : undefined)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {conversationAction === "delete" ? "Delete chat?" : "Clear chat?"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {conversationAction === "delete"
+                ? `This will permanently remove all messages with ${activeUser?.name || "this user"} and close the chat window.`
+                : `This will permanently remove all messages with ${activeUser?.name || "this user"}.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={conversationActionPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={conversationActionPending}
+              onClick={(event) => {
+                event.preventDefault();
+                if (!conversationAction) return;
+                void runConversationAction(conversationAction);
+              }}
+            >
+              {conversationActionPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              {conversationAction === "delete" ? "Delete chat" : "Clear chat"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Dialog open={!!forwardMessage} onOpenChange={(open) => (!open ? (setForwardMessage(null), setForwardSearch("")) : undefined)}>
         <DialogContent className="fixed !top-1/2 !left-1/2 w-[calc(100vw-2rem)] sm:max-w-lg !-translate-x-1/2 !-translate-y-1/2">

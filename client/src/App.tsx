@@ -134,12 +134,20 @@ function Layout({ children }: { children: React.ReactNode }) {
   const { user, logout } = useAuth();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [isDesktopSidebarCollapsed, setIsDesktopSidebarCollapsed] = useState(() => {
+    if (typeof window === "undefined") return true;
+    return window.localStorage.getItem("taskflow-sidebar-collapsed") !== "0";
+  });
   const [location, setLocation] = useLocation();
 
   useEffect(() => {
     if (!user?.id) return;
     void initPushNotifications();
   }, [user?.id]);
+
+  useEffect(() => {
+    window.localStorage.setItem("taskflow-sidebar-collapsed", isDesktopSidebarCollapsed ? "1" : "0");
+  }, [isDesktopSidebarCollapsed]);
 
   const getPageTitle = (path: string) => {
     switch (path) {
@@ -182,9 +190,14 @@ function Layout({ children }: { children: React.ReactNode }) {
         }}
         mobileOpen={isMobileSidebarOpen}
         onMobileOpenChange={setIsMobileSidebarOpen}
+        collapsed={isDesktopSidebarCollapsed}
+        onToggleCollapsed={() => setIsDesktopSidebarCollapsed((prev) => !prev)}
       />
 
-      <main className="flex-1 min-w-0 md:ml-64 p-4 md:p-8 overflow-y-auto min-h-screen">
+      <main
+        className={`flex-1 min-w-0 p-4 md:p-8 overflow-y-auto min-h-screen transition-[margin] duration-300 ${isDesktopSidebarCollapsed ? "md:ml-20" : "md:ml-64"
+          }`}
+      >
         <header className="mb-6 md:mb-8 flex flex-col gap-4 md:flex-row md:items-center md:justify-between animate-in">
           <div className="flex items-start gap-3">
             <Button

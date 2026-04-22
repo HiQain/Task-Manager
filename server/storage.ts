@@ -115,6 +115,7 @@ export interface IStorage {
   getMessage(id: number): Promise<Message | undefined>;
   updateMessage(id: number, content: string): Promise<Message>;
   deleteMessage(id: number): Promise<void>;
+  clearConversation(userId: number, otherUserId: number): Promise<number>;
   getTaskChatGroup(taskId: number): Promise<TaskChatGroup | undefined>;
   ensureTaskChatGroup(taskId: number, createdById: number): Promise<TaskChatGroup>;
   getTaskComments(taskId: number): Promise<TaskComment[]>;
@@ -580,6 +581,29 @@ export class DatabaseStorage implements IStorage {
 
   async deleteMessage(id: number): Promise<void> {
     await db.delete(messages).where(eq(messages.id, id));
+  }
+
+  async clearConversation(userId: number, otherUserId: number): Promise<number> {
+    const conversationMessages = await db
+      .select({ id: messages.id })
+      .from(messages)
+      .where(
+        or(
+          and(eq(messages.fromUserId, userId), eq(messages.toUserId, otherUserId)),
+          and(eq(messages.fromUserId, otherUserId), eq(messages.toUserId, userId))
+        )
+      );
+
+    if (conversationMessages.length === 0) return 0;
+
+    await db.delete(messages).where(
+      inArray(
+        messages.id,
+        conversationMessages.map((message) => message.id),
+      )
+    );
+
+    return conversationMessages.length;
   }
 
   async getTaskChatGroup(taskId: number): Promise<TaskChatGroup | undefined> {

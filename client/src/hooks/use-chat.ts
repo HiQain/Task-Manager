@@ -148,6 +148,27 @@ export function useDeleteMessage(activeUserId?: number) {
   });
 }
 
+export function useClearConversation(activeUserId?: number) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (userId: number) => {
+      const res = await fetch(buildUrl(api.chats.clear.path, { userId }), {
+        method: api.chats.clear.method,
+        credentials: "include",
+      });
+      const body = await readJsonOrThrow(res, "Failed to clear conversation");
+      return api.chats.clear.responses[200].parse(body);
+    },
+    onSuccess: (_data, userId) => {
+      if (activeUserId || userId) {
+        queryClient.invalidateQueries({ queryKey: [api.chats.list.path, activeUserId || userId] });
+      }
+      queryClient.invalidateQueries({ queryKey: [api.chats.unread.path] });
+    },
+  });
+}
+
 export function useMarkChatRead() {
   const queryClient = useQueryClient();
 
